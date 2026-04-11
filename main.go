@@ -8,6 +8,17 @@ import (
 	"time"
 )
 
+type namespaceRoute struct {
+	namespace string
+	target    string
+	kind      string
+}
+
+const (
+	routeRestart = "restart"
+	routeLogs    = "logs"
+)
+
 func loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -60,46 +71,71 @@ func splitPathStrict(path string) ([]string, bool) {
 	return parts, true
 }
 
+func parseNamespaceRoute(path string) (namespaceRoute, bool) {
+	parts, ok := splitPathStrict(path)
+	if !ok {
+		return namespaceRoute{}, false
+	}
+	if len(parts) != 5 || parts[0] != "namespaces" {
+		return namespaceRoute{}, false
+	}
+
+	ns := parts[1]
+	resource := parts[2]
+	name := parts[3]
+	action := parts[4]
+
+	if resource == "deployments" && action == "restart" {
+		return namespaceRoute{
+			namespace: ns,
+			target:    name,
+			kind:      routeRestart,
+		}, true
+	}
+	if resource == "pods" && action == "logs" {
+		return namespaceRoute{
+			namespace: ns,
+			target:    name,
+			kind:      routeLogs,
+		}, true
+	}
+
+	return namespaceRoute{
+		namespace: ns,
+		target:    name,
+	}, true
+}
+
 func namespaceHandler(w http.ResponseWriter, r *http.Request) {
-	parts, ok := splitPathStrict(r.URL.Path)
+	route, ok := parseNamespaceRoute(r.URL.Path)
 	if !ok {
 		writeJSONError(w, http.StatusBadRequest, "malformed path")
 		return
 	}
 
-	if len(parts) != 5 || parts[0] != "namespaces" {
-		writeJSONError(w, http.StatusBadRequest, "malformed path")
-		return
-	}
-
-	ns := parts[1]
-	resource := parts[2]
-	target := parts[3]
-	action := parts[4]
-
-	switch {
-	case resource == "deployments" && action == "restart":
+	switch route.kind {
+	case routeRestart:
 		if r.Method != http.MethodPost {
 			writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 
 		writeJSON(w, http.StatusOK, map[string]any{
-			"namespace":  ns,
-			"deployment": target,
+			"namespace":  route.namespace,
+			"deployment": route.target,
 			"action":     "restart",
 			"success":    true,
 		})
 
-	case resource == "pods" && action == "logs":
+	case routeLogs:
 		if r.Method != http.MethodGet {
 			writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 
 		writeJSON(w, http.StatusOK, map[string]any{
-			"namespace": ns,
-			"pod":       target,
+			"namespace": route.namespace,
+			"pod":       route.target,
 			"action":    "logs",
 			"logs":      "placeholder logs",
 		})
