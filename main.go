@@ -30,6 +30,12 @@ type appState struct {
 	kubeInitErr string
 }
 
+type routeError struct {
+	status  int
+	message string
+	details map[string]any
+}
+
 type healthResponse struct {
 	AppStatus           string `json:"app_status"`
 	KubernetesReachable bool   `json:"kubernetes_reachable"`
@@ -128,6 +134,69 @@ func hasProxyAccessAllowed(dep *appsv1.Deployment) bool {
 		return false
 	}
 	return dep.Labels[proxyAccessLabelKey] == proxyAccessLabelValue
+}
+
+func findOwnerReference(ownerRefs []metav1.OwnerReference, kind string) (metav1.OwnerReference, bool) {
+	for _, ownerRef := range ownerRefs {
+		if ownerRef.Kind == kind {
+			return ownerRef, true
+		}
+	}
+	return metav1.OwnerReference{}, false
+}
+
+func (a *appState) resolvePodOwningDeployment(ctx context.Context, namespace, podName string) (string, string, *appsv1.Deployment, *routeError) {
+	if a.kubeClient == nil {
+		errMsg := "kubernetes client not initialized"
+		if a.kubeInitErr != "" {
+			errMsg = errMsg + ": " + a.kubeInitErr
+		}
+		return "", "", nil, &routeError{status: http.StatusServiceUnavailable, message: errMsg}
+	}
+
+	pod, err := a.kubeClient.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return "", "", nil, &routeError{status: http.StatusNotFound, message: "pod not found"}
+		}
+		return "", "", nil, &routeError{status: http.StatusServiceUnavailable, message: "failed to read pod", details: map[string]any{"details": err.Error()}}
+	}
+
+	if len(pod.OwnerReferences) == 0 {
+		return pod.Name, "", nil, &routeError{status: http.StatusBadRequest, message: "pod has no owner references"}
+	}
+
+	rsOwnerRef, ok := findOwnerReference(pod.OwnerReferences, "ReplicaSet")
+	if !ok {
+		return pod.Name, "", nil, &routeError{status: http.StatusBadRequest, message: "pod is not owned by a ReplicaSet"}
+	}
+
+	rs, err := a.kubeClient.AppsV1().ReplicaSets(namespace).Get(ctx, rsOwnerRef.Name, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return pod.Name, rsOwnerRef.Name, nil, &routeError{status: http.StatusNotFound, message: "replicaset owner not found"}
+		}
+		return pod.Name, rsOwnerRef.Name, nil, &routeError{status: http.StatusServiceUnavailable, message: "failed to read replicaset", details: map[string]any{"details": err.Error()}}
+	}
+
+	if len(rs.OwnerReferences) == 0 {
+		return pod.Name, rs.Name, nil, &routeError{status: http.StatusBadRequest, message: "replicaset has no Deployment owner"}
+	}
+
+	depOwnerRef, ok := findOwnerReference(rs.OwnerReferences, "Deployment")
+	if !ok {
+		return pod.Name, rs.Name, nil, &routeError{status: http.StatusBadRequest, message: "replicaset has no Deployment owner"}
+	}
+
+	dep, err := a.getDeployment(ctx, namespace, depOwnerRef.Name)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return pod.Name, rs.Name, nil, &routeError{status: http.StatusNotFound, message: "deployment owner not found"}
+		}
+		return pod.Name, rs.Name, nil, &routeError{status: http.StatusServiceUnavailable, message: "failed to read deployment", details: map[string]any{"details": err.Error()}}
+	}
+
+	return pod.Name, rs.Name, dep, nil
 }
 
 func buildRestartAnnotationPatch(restartedAt string) ([]byte, error) {
@@ -315,11 +384,42 @@ func (a *appState) namespaceHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		podName, replicaSetName, dep, routeErr := a.resolvePodOwningDeployment(r.Context(), route.namespace, route.target)
+		if routeErr != nil {
+			resp := map[string]any{
+				"error":     routeErr.message,
+				"namespace": route.namespace,
+				"pod":       route.target,
+				"action":    "logs",
+			}
+			if podName != "" {
+				resp["pod"] = podName
+			}
+			if replicaSetName != "" {
+				resp["replicaset"] = replicaSetName
+			}
+			for k, v := range routeErr.details {
+				resp[k] = v
+			}
+			writeJSON(w, routeErr.status, resp)
+			return
+		}
+
+		deploymentLabel := ""
+		if dep.Labels != nil {
+			deploymentLabel = dep.Labels[proxyAccessLabelKey]
+		}
+
 		writeJSON(w, http.StatusOK, map[string]any{
-			"namespace": route.namespace,
-			"pod":       route.target,
-			"action":    "logs",
-			"logs":      "placeholder logs",
+			"namespace":            route.namespace,
+			"pod":                  podName,
+			"replicaset":           replicaSetName,
+			"deployment":           dep.Name,
+			"proxy_access_allowed": hasProxyAccessAllowed(dep),
+			"deployment_label":     deploymentLabel,
+			"required_label":       proxyAccessLabelKey + "=" + proxyAccessLabelValue,
+			"action":               "logs",
+			"logs":                 "not implemented yet",
 		})
 
 	default:

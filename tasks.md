@@ -57,9 +57,9 @@ Each task should be completed, tested, and committed before moving to the next o
 - [x] Return clear JSON success/error responses
 
 ### Pod ownership resolution
-- [ ] Add helper to resolve Pod ownership:
-  - [ ] Pod -> ReplicaSet -> Deployment
-- [ ] Return clear errors when ownership cannot be resolved
+- [x] Add helper to resolve Pod ownership:
+  - [x] Pod -> ReplicaSet -> Deployment
+- [x] Return clear errors when ownership cannot be resolved
 
 ### Pod logs
 - [ ] Implement `GET /namespaces/{ns}/pods/{pod}/logs`
