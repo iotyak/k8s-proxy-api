@@ -68,16 +68,16 @@ Each task should be completed, tested, and committed before moving to the next o
 - [x] Avoid buffering the entire log output in memory
 
 ### Pod status
-- [ ] Add deployment-scoped endpoint:
-  - [ ] `GET /namespaces/{ns}/deployments/{name}/pods/status`
-- [ ] List pods belonging to the Deployment
-- [ ] Return:
-  - [ ] pod name
-  - [ ] phase
-  - [ ] pod IP
-  - [ ] conditions
-  - [ ] container readiness
-  - [ ] restart counts
+- [x] Add deployment-scoped endpoint:
+  - [x] `GET /namespaces/{ns}/deployments/{name}/pods/status`
+- [x] List pods belonging to the Deployment
+- [x] Return:
+  - [x] pod name
+  - [x] phase
+  - [x] pod IP
+  - [x] conditions
+  - [x] container readiness
+  - [x] restart counts
 
 ### Packaging and deployment
 - [ ] Add a minimal Dockerfile

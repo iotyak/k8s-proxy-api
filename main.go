@@ -38,6 +38,30 @@ type routeError struct {
 	details map[string]any
 }
 
+type podConditionStatus struct {
+	Type    string `json:"type"`
+	Status  string `json:"status"`
+	Reason  string `json:"reason,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+type podContainerStatus struct {
+	Name         string `json:"name"`
+	Ready        bool   `json:"ready"`
+	RestartCount int32  `json:"restart_count"`
+}
+
+type podStatusItem struct {
+	Name              string               `json:"name"`
+	Phase             string               `json:"phase"`
+	PodIP             string               `json:"pod_ip,omitempty"`
+	Conditions        []podConditionStatus `json:"conditions"`
+	Containers        []podContainerStatus `json:"containers"`
+	ReadyContainers   int                  `json:"ready_containers"`
+	TotalContainers   int                  `json:"total_containers"`
+	TotalRestartCount int32                `json:"total_restart_count"`
+}
+
 type healthResponse struct {
 	AppStatus           string `json:"app_status"`
 	KubernetesReachable bool   `json:"kubernetes_reachable"`
@@ -48,6 +72,7 @@ type healthResponse struct {
 const (
 	routeRestart = "restart"
 	routeLogs    = "logs"
+	routePods    = "pods-status"
 
 	proxyAccessLabelKey   = "proxy-access"
 	proxyAccessLabelValue = "allowed"
@@ -245,6 +270,75 @@ func (a *appState) streamPodLogs(ctx context.Context, namespace, podName string,
 	return nil
 }
 
+func (a *appState) listDeploymentPodsStatus(ctx context.Context, namespace string, dep *appsv1.Deployment) ([]podStatusItem, string, *routeError) {
+	if a.kubeClient == nil {
+		errMsg := "kubernetes client not initialized"
+		if a.kubeInitErr != "" {
+			errMsg = errMsg + ": " + a.kubeInitErr
+		}
+		return nil, "", &routeError{status: http.StatusServiceUnavailable, message: errMsg}
+	}
+
+	selector, err := metav1.LabelSelectorAsSelector(dep.Spec.Selector)
+	if err != nil {
+		return nil, "", &routeError{
+			status:  http.StatusInternalServerError,
+			message: "invalid deployment selector",
+			details: map[string]any{"details": err.Error()},
+		}
+	}
+
+	pods, err := a.kubeClient.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector.String()})
+	if err != nil {
+		return nil, selector.String(), &routeError{
+			status:  http.StatusServiceUnavailable,
+			message: "failed to list pods for deployment",
+			details: map[string]any{"details": err.Error()},
+		}
+	}
+
+	out := make([]podStatusItem, 0, len(pods.Items))
+	for _, p := range pods.Items {
+		conditions := make([]podConditionStatus, 0, len(p.Status.Conditions))
+		for _, c := range p.Status.Conditions {
+			conditions = append(conditions, podConditionStatus{
+				Type:    string(c.Type),
+				Status:  string(c.Status),
+				Reason:  c.Reason,
+				Message: c.Message,
+			})
+		}
+
+		containers := make([]podContainerStatus, 0, len(p.Status.ContainerStatuses))
+		readyCount := 0
+		var restartCount int32
+		for _, cs := range p.Status.ContainerStatuses {
+			if cs.Ready {
+				readyCount++
+			}
+			restartCount += cs.RestartCount
+			containers = append(containers, podContainerStatus{
+				Name:         cs.Name,
+				Ready:        cs.Ready,
+				RestartCount: cs.RestartCount,
+			})
+		}
+
+		out = append(out, podStatusItem{
+			Name:              p.Name,
+			Phase:             string(p.Status.Phase),
+			PodIP:             p.Status.PodIP,
+			Conditions:        conditions,
+			Containers:        containers,
+			ReadyContainers:   readyCount,
+			TotalContainers:   len(p.Status.ContainerStatuses),
+			TotalRestartCount: restartCount,
+		})
+	}
+
+	return out, selector.String(), nil
+}
+
 func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -284,34 +378,42 @@ func parseNamespaceRoute(path string) (namespaceRoute, bool) {
 	if !ok {
 		return namespaceRoute{}, false
 	}
-	if len(parts) != 5 || parts[0] != "namespaces" {
-		return namespaceRoute{}, false
-	}
+	if len(parts) == 5 && parts[0] == "namespaces" {
+		ns := parts[1]
+		resource := parts[2]
+		name := parts[3]
+		action := parts[4]
 
-	ns := parts[1]
-	resource := parts[2]
-	name := parts[3]
-	action := parts[4]
+		if resource == "deployments" && action == "restart" {
+			return namespaceRoute{
+				namespace: ns,
+				target:    name,
+				kind:      routeRestart,
+			}, true
+		}
+		if resource == "pods" && action == "logs" {
+			return namespaceRoute{
+				namespace: ns,
+				target:    name,
+				kind:      routeLogs,
+			}, true
+		}
 
-	if resource == "deployments" && action == "restart" {
 		return namespaceRoute{
 			namespace: ns,
 			target:    name,
-			kind:      routeRestart,
-		}, true
-	}
-	if resource == "pods" && action == "logs" {
-		return namespaceRoute{
-			namespace: ns,
-			target:    name,
-			kind:      routeLogs,
 		}, true
 	}
 
-	return namespaceRoute{
-		namespace: ns,
-		target:    name,
-	}, true
+	if len(parts) == 6 && parts[0] == "namespaces" && parts[2] == "deployments" && parts[4] == "pods" && parts[5] == "status" {
+		return namespaceRoute{
+			namespace: parts[1],
+			target:    parts[3],
+			kind:      routePods,
+		}, true
+	}
+
+	return namespaceRoute{}, false
 }
 
 func (a *appState) namespaceHandler(w http.ResponseWriter, r *http.Request) {
@@ -471,6 +573,79 @@ func (a *appState) namespaceHandler(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, err.status, resp)
 			return
 		}
+
+	case routePods:
+		if r.Method != http.MethodGet {
+			writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+
+		dep, err := a.getDeployment(r.Context(), route.namespace, route.target)
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				writeJSON(w, http.StatusNotFound, map[string]any{
+					"error":      "deployment not found",
+					"namespace":  route.namespace,
+					"deployment": route.target,
+					"action":     "pods-status",
+				})
+				return
+			}
+
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"error":      "failed to read deployment",
+				"namespace":  route.namespace,
+				"deployment": route.target,
+				"action":     "pods-status",
+				"details":    err.Error(),
+			})
+			return
+		}
+
+		deploymentLabel := ""
+		if dep.Labels != nil {
+			deploymentLabel = dep.Labels[proxyAccessLabelKey]
+		}
+
+		if !hasProxyAccessAllowed(dep) {
+			writeJSON(w, http.StatusForbidden, map[string]any{
+				"error":            "deployment is not allowed for proxy access",
+				"namespace":        route.namespace,
+				"deployment":       route.target,
+				"action":           "pods-status",
+				"required_label":   proxyAccessLabelKey + "=" + proxyAccessLabelValue,
+				"deployment_label": deploymentLabel,
+			})
+			return
+		}
+
+		pods, selector, routeErr := a.listDeploymentPodsStatus(r.Context(), route.namespace, dep)
+		if routeErr != nil {
+			resp := map[string]any{
+				"error":      routeErr.message,
+				"namespace":  route.namespace,
+				"deployment": route.target,
+				"action":     "pods-status",
+			}
+			if routeErr.details != nil {
+				for k, v := range routeErr.details {
+					resp[k] = v
+				}
+			}
+			writeJSON(w, routeErr.status, resp)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"namespace":        route.namespace,
+			"deployment":       route.target,
+			"action":           "pods-status",
+			"selector":         selector,
+			"pod_count":        len(pods),
+			"deployment_label": deploymentLabel,
+			"required_label":   proxyAccessLabelKey + "=" + proxyAccessLabelValue,
+			"pods":             pods,
+		})
 
 	default:
 		writeJSONError(w, http.StatusNotFound, "endpoint not found")
