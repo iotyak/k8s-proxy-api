@@ -1,0 +1,79 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k8s-proxy-api
+  namespace: proxy-test
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: k8s-proxy-api
+  namespace: proxy-test
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: k8s-proxy-api
+  namespace: proxy-test
+subjects:
+  - kind: ServiceAccount
+    name: k8s-proxy-api
+    namespace: proxy-test
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: k8s-proxy-api
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k8s-proxy-api
+  namespace: proxy-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: k8s-proxy-api
+  template:
+    metadata:
+      labels:
+        app: k8s-proxy-api
+    spec:
+      serviceAccountName: k8s-proxy-api
+      containers:
+        - name: k8s-proxy-api
+          image: k8s-proxy-api:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: k8s-proxy-api
+  namespace: proxy-test
+spec:
+  type: ClusterIP
+  selector:
+    app: k8s-proxy-api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

@@ -80,14 +80,14 @@ Each task should be completed, tested, and committed before moving to the next o
   - [x] restart counts
 
 ### Packaging and deployment
-- [ ] Add a minimal Dockerfile
-- [ ] Prefer a small non-root image
-- [ ] Generate Kubernetes manifests:
-  - [ ] ServiceAccount
-  - [ ] Role
-  - [ ] RoleBinding
-  - [ ] Deployment
-  - [ ] Service
+- [x] Add a minimal Dockerfile
+- [x] Prefer a small non-root image
+- [x] Generate Kubernetes manifests:
+  - [x] ServiceAccount
+  - [x] Role
+  - [x] RoleBinding
+  - [x] Deployment
+  - [x] Service
 
 ## Guardrails
 These should stay true as the project grows:

@@ -163,6 +163,73 @@ func hasProxyAccessAllowed(dep *appsv1.Deployment) bool {
 	return dep.Labels[proxyAccessLabelKey] == proxyAccessLabelValue
 }
 
+func deploymentLabelValue(dep *appsv1.Deployment) string {
+	if dep == nil || dep.Labels == nil {
+		return ""
+	}
+	return dep.Labels[proxyAccessLabelKey]
+}
+
+func writeJSONErrorFields(w http.ResponseWriter, status int, msg string, fields map[string]any) {
+	resp := map[string]any{"error": msg}
+	for k, v := range fields {
+		resp[k] = v
+	}
+	writeJSON(w, status, resp)
+}
+
+func writeRouteError(w http.ResponseWriter, routeErr *routeError, fields map[string]any) {
+	resp := map[string]any{"error": routeErr.message}
+	for k, v := range fields {
+		resp[k] = v
+	}
+	if routeErr.details != nil {
+		for k, v := range routeErr.details {
+			resp[k] = v
+		}
+	}
+	writeJSON(w, routeErr.status, resp)
+}
+
+func (a *appState) getAuthorizedDeployment(ctx context.Context, namespace, name, action string, extra map[string]any, w http.ResponseWriter) (*appsv1.Deployment, bool) {
+	dep, err := a.getDeployment(ctx, namespace, name)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			fields := map[string]any{"namespace": namespace, "deployment": name, "action": action}
+			for k, v := range extra {
+				fields[k] = v
+			}
+			writeJSONErrorFields(w, http.StatusNotFound, "deployment not found", fields)
+			return nil, false
+		}
+
+		fields := map[string]any{"namespace": namespace, "deployment": name, "action": action, "details": err.Error()}
+		for k, v := range extra {
+			fields[k] = v
+		}
+		writeJSONErrorFields(w, http.StatusServiceUnavailable, "failed to read deployment", fields)
+		return nil, false
+	}
+
+	deploymentLabel := deploymentLabelValue(dep)
+	if !hasProxyAccessAllowed(dep) {
+		fields := map[string]any{
+			"namespace":        namespace,
+			"deployment":       name,
+			"action":           action,
+			"required_label":   proxyAccessLabelKey + "=" + proxyAccessLabelValue,
+			"deployment_label": deploymentLabel,
+		}
+		for k, v := range extra {
+			fields[k] = v
+		}
+		writeJSONErrorFields(w, http.StatusForbidden, "deployment is not allowed for proxy access", fields)
+		return nil, false
+	}
+
+	return dep, true
+}
+
 func findOwnerReference(ownerRefs []metav1.OwnerReference, kind string) (metav1.OwnerReference, bool) {
 	for _, ownerRef := range ownerRefs {
 		if ownerRef.Kind == kind {
@@ -430,42 +497,8 @@ func (a *appState) namespaceHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		dep, err := a.getDeployment(r.Context(), route.namespace, route.target)
-		if err != nil {
-			if apierrors.IsNotFound(err) {
-				writeJSON(w, http.StatusNotFound, map[string]any{
-					"error":      "deployment not found",
-					"namespace":  route.namespace,
-					"deployment": route.target,
-					"action":     "restart",
-				})
-				return
-			}
-
-			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
-				"error":      "failed to read deployment",
-				"namespace":  route.namespace,
-				"deployment": route.target,
-				"action":     "restart",
-				"details":    err.Error(),
-			})
-			return
-		}
-
-		deploymentLabel := ""
-		if dep.Labels != nil {
-			deploymentLabel = dep.Labels[proxyAccessLabelKey]
-		}
-
-		if !hasProxyAccessAllowed(dep) {
-			writeJSON(w, http.StatusForbidden, map[string]any{
-				"error":            "deployment is not allowed for proxy access",
-				"namespace":        route.namespace,
-				"deployment":       route.target,
-				"action":           "restart",
-				"required_label":   proxyAccessLabelKey + "=" + proxyAccessLabelValue,
-				"deployment_label": deploymentLabel,
-			})
+		dep, ok := a.getAuthorizedDeployment(r.Context(), route.namespace, route.target, "restart", nil, w)
+		if !ok {
 			return
 		}
 
@@ -500,14 +533,15 @@ func (a *appState) namespaceHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		writeJSON(w, http.StatusOK, map[string]any{
-			"success":        true,
-			"authorized":     true,
-			"namespace":      route.namespace,
-			"deployment":     route.target,
-			"action":         "restart",
-			"restarted_at":   restartedAt,
-			"message":        "deployment restart annotation patched",
-			"required_label": proxyAccessLabelKey + "=" + proxyAccessLabelValue,
+			"success":          true,
+			"authorized":       true,
+			"namespace":        route.namespace,
+			"deployment":       route.target,
+			"action":           "restart",
+			"restarted_at":     restartedAt,
+			"message":          "deployment restart annotation patched",
+			"required_label":   proxyAccessLabelKey + "=" + proxyAccessLabelValue,
+			"deployment_label": deploymentLabelValue(dep),
 		})
 
 	case routeLogs:
@@ -518,33 +552,25 @@ func (a *appState) namespaceHandler(w http.ResponseWriter, r *http.Request) {
 
 		podName, replicaSetName, dep, routeErr := a.resolvePodOwningDeployment(r.Context(), route.namespace, route.target)
 		if routeErr != nil {
-			resp := map[string]any{
-				"error":     routeErr.message,
+			fields := map[string]any{
 				"namespace": route.namespace,
 				"pod":       route.target,
 				"action":    "logs",
 			}
 			if podName != "" {
-				resp["pod"] = podName
+				fields["pod"] = podName
 			}
 			if replicaSetName != "" {
-				resp["replicaset"] = replicaSetName
+				fields["replicaset"] = replicaSetName
 			}
-			for k, v := range routeErr.details {
-				resp[k] = v
-			}
-			writeJSON(w, routeErr.status, resp)
+			writeRouteError(w, routeErr, fields)
 			return
 		}
 
-		deploymentLabel := ""
-		if dep.Labels != nil {
-			deploymentLabel = dep.Labels[proxyAccessLabelKey]
-		}
+		deploymentLabel := deploymentLabelValue(dep)
 
 		if !hasProxyAccessAllowed(dep) {
-			writeJSON(w, http.StatusForbidden, map[string]any{
-				"error":            "deployment is not allowed for proxy access",
+			writeJSONErrorFields(w, http.StatusForbidden, "deployment is not allowed for proxy access", map[string]any{
 				"namespace":        route.namespace,
 				"pod":              podName,
 				"replicaset":       replicaSetName,
@@ -557,20 +583,13 @@ func (a *appState) namespaceHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err := a.streamPodLogs(r.Context(), route.namespace, podName, w); err != nil {
-			resp := map[string]any{
-				"error":      err.message,
+			writeRouteError(w, err, map[string]any{
 				"namespace":  route.namespace,
 				"pod":        podName,
 				"replicaset": replicaSetName,
 				"deployment": dep.Name,
 				"action":     "logs",
-			}
-			if err.details != nil {
-				for k, v := range err.details {
-					resp[k] = v
-				}
-			}
-			writeJSON(w, err.status, resp)
+			})
 			return
 		}
 
@@ -580,59 +599,20 @@ func (a *appState) namespaceHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		dep, err := a.getDeployment(r.Context(), route.namespace, route.target)
-		if err != nil {
-			if apierrors.IsNotFound(err) {
-				writeJSON(w, http.StatusNotFound, map[string]any{
-					"error":      "deployment not found",
-					"namespace":  route.namespace,
-					"deployment": route.target,
-					"action":     "pods-status",
-				})
-				return
-			}
-
-			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
-				"error":      "failed to read deployment",
-				"namespace":  route.namespace,
-				"deployment": route.target,
-				"action":     "pods-status",
-				"details":    err.Error(),
-			})
+		dep, ok := a.getAuthorizedDeployment(r.Context(), route.namespace, route.target, "pods-status", nil, w)
+		if !ok {
 			return
 		}
 
-		deploymentLabel := ""
-		if dep.Labels != nil {
-			deploymentLabel = dep.Labels[proxyAccessLabelKey]
-		}
-
-		if !hasProxyAccessAllowed(dep) {
-			writeJSON(w, http.StatusForbidden, map[string]any{
-				"error":            "deployment is not allowed for proxy access",
-				"namespace":        route.namespace,
-				"deployment":       route.target,
-				"action":           "pods-status",
-				"required_label":   proxyAccessLabelKey + "=" + proxyAccessLabelValue,
-				"deployment_label": deploymentLabel,
-			})
-			return
-		}
+		deploymentLabel := deploymentLabelValue(dep)
 
 		pods, selector, routeErr := a.listDeploymentPodsStatus(r.Context(), route.namespace, dep)
 		if routeErr != nil {
-			resp := map[string]any{
-				"error":      routeErr.message,
+			writeRouteError(w, routeErr, map[string]any{
 				"namespace":  route.namespace,
 				"deployment": route.target,
 				"action":     "pods-status",
-			}
-			if routeErr.details != nil {
-				for k, v := range routeErr.details {
-					resp[k] = v
-				}
-			}
-			writeJSON(w, routeErr.status, resp)
+			})
 			return
 		}
 
