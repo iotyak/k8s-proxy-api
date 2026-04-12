@@ -445,6 +445,11 @@ func parseNamespaceRoute(path string) (namespaceRoute, bool) {
 	if !ok {
 		return namespaceRoute{}, false
 	}
+	if len(parts) < 3 || parts[0] != "api" || parts[1] != "v1" {
+		return namespaceRoute{}, false
+	}
+
+	parts = parts[2:]
 	if len(parts) == 5 && parts[0] == "namespaces" {
 		ns := parts[1]
 		resource := parts[2]
@@ -645,10 +650,10 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", app.healthHandler)
-	mux.HandleFunc("/namespaces/", app.namespaceHandler)
+	mux.HandleFunc("/api/v1/namespaces/", app.namespaceHandler)
 
 	root := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/namespaces/") {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/namespaces/") {
 			if _, ok := splitPathStrict(r.URL.Path); !ok {
 				writeJSONError(w, http.StatusBadRequest, "malformed path")
 				return

@@ -37,9 +37,9 @@ Each task should be completed, tested, and committed before moving to the next o
 ## Completed
 ### Placeholder API structure
 - [x] Add placeholder route:
-  - [x] `POST /namespaces/{ns}/deployments/{name}/restart`
+  - [x] `POST /api/v1/namespaces/{ns}/deployments/{name}/restart`
 - [x] Add placeholder route:
-  - [x] `GET /namespaces/{ns}/pods/{pod}/logs`
+  - [x] `GET /api/v1/namespaces/{ns}/pods/{pod}/logs`
 - [x] Parse path segments explicitly and safely
 - [x] Return structured JSON errors for malformed paths
 
@@ -62,14 +62,14 @@ Each task should be completed, tested, and committed before moving to the next o
 - [x] Return clear errors when ownership cannot be resolved
 
 ### Pod logs
-- [x] Implement `GET /namespaces/{ns}/pods/{pod}/logs`
+- [x] Implement `GET /api/v1/namespaces/{ns}/pods/{pod}/logs`
 - [x] Authorize access through owning Deployment label check
 - [x] Stream logs directly to the HTTP response
 - [x] Avoid buffering the entire log output in memory
 
 ### Pod status
 - [x] Add deployment-scoped endpoint:
-  - [x] `GET /namespaces/{ns}/deployments/{name}/pods/status`
+  - [x] `GET /api/v1/namespaces/{ns}/deployments/{name}/pods/status`
 - [x] List pods belonging to the Deployment
 - [x] Return:
   - [x] pod name
