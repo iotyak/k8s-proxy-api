@@ -1,0 +1,107 @@
+
+`tasks.md`
+```md
+# k8s-proxy-api Tasks
+
+## Project Workflow
+Implementation should stay incremental.
+Each task should be completed, tested, and committed before moving to the next one.
+
+## Completed
+- [x] Initialize the Go module
+- [x] Create a minimal stdlib HTTP server
+- [x] Add `GET /health`
+- [x] Return a basic JSON health response
+- [x] Add basic request logging
+- [x] Confirm the server runs locally and responds on `127.0.0.1:8080`
+
+## Current Task
+### Add Kubernetes client-go with practical dev behavior
+- [ ] Add official `client-go` dependencies
+- [ ] Load Kubernetes config from `KUBECONFIG` when set
+- [ ] Fall back to in-cluster config when `KUBECONFIG` is not set
+- [ ] Create a Kubernetes clientset during startup
+- [ ] Do not crash the HTTP server just because Kubernetes is unreachable
+- [ ] Update `GET /health` to return:
+  - [ ] app status
+  - [ ] Kubernetes reachable true/false
+  - [ ] Kubernetes version when reachable
+  - [ ] clear error string when unreachable
+- [ ] Keep the server on stdlib `net/http`
+- [ ] Keep the code small and readable
+- [ ] Test locally using:
+  - [ ] `export KUBECONFIG=/etc/rancher/k3s/k3s.yaml`
+  - [ ] `go run .`
+  - [ ] `curl http://127.0.0.1:8080/health`
+
+## Next Tasks
+### Placeholder API structure
+- [ ] Add placeholder route:
+  - [ ] `POST /namespaces/{ns}/deployments/{name}/restart`
+- [ ] Add placeholder route:
+  - [ ] `GET /namespaces/{ns}/pods/{pod}/logs`
+- [ ] Parse path segments explicitly and safely
+- [ ] Return structured JSON errors for malformed paths
+
+### Deployment authorization helper
+- [ ] Add helper to get a Deployment by namespace/name
+- [ ] Add helper to verify label `proxy-access=allowed`
+- [ ] Return `404` when Deployment is missing
+- [ ] Return `403` when label is missing or not allowed
+
+### Safe Deployment restart
+- [ ] Implement restart handler using a narrow patch
+- [ ] Patch `spec.template.metadata.annotations`
+- [ ] Set `kubectl.kubernetes.io/restarted-at`
+- [ ] Return clear JSON success/error responses
+
+### Pod ownership resolution
+- [ ] Add helper to resolve Pod ownership:
+  - [ ] Pod -> ReplicaSet -> Deployment
+- [ ] Return clear errors when ownership cannot be resolved
+
+### Pod logs
+- [ ] Implement `GET /namespaces/{ns}/pods/{pod}/logs`
+- [ ] Authorize access through owning Deployment label check
+- [ ] Stream logs directly to the HTTP response
+- [ ] Avoid buffering the entire log output in memory
+
+### Pod status
+- [ ] Add deployment-scoped endpoint:
+  - [ ] `GET /namespaces/{ns}/deployments/{name}/pods/status`
+- [ ] List pods belonging to the Deployment
+- [ ] Return:
+  - [ ] pod name
+  - [ ] phase
+  - [ ] pod IP
+  - [ ] conditions
+  - [ ] container readiness
+  - [ ] restart counts
+
+### Packaging and deployment
+- [ ] Add a minimal Dockerfile
+- [ ] Prefer a small non-root image
+- [ ] Generate Kubernetes manifests:
+  - [ ] ServiceAccount
+  - [ ] Role
+  - [ ] RoleBinding
+  - [ ] Deployment
+  - [ ] Service
+
+## Guardrails
+These should stay true as the project grows:
+- [ ] Do not add third-party routers unless there is a strong reason
+- [ ] Do not expose general Kubernetes API access
+- [ ] Keep RBAC as narrow as possible
+- [ ] Keep authorization logic explicit
+- [ ] Keep code understandable enough to maintain without a framework
+- [ ] Test each phase before moving to the next one
+
+## Suggested Commit Milestones
+- [ ] `feat: add kube client initialization and health reporting`
+- [ ] `feat: add placeholder restart and logs routes`
+- [ ] `feat: add deployment label authorization`
+- [ ] `feat: implement deployment restart patch`
+- [ ] `feat: implement pod ownership resolution and logs streaming`
+- [ ] `feat: add deployment pod status endpoint`
+- [ ] `feat: add container build and kubernetes manifests`

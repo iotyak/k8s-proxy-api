@@ -2,16 +2,34 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
+
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 type namespaceRoute struct {
 	namespace string
 	target    string
 	kind      string
+}
+
+type appState struct {
+	kubeClient  kubernetes.Interface
+	kubeInitErr string
+}
+
+type healthResponse struct {
+	AppStatus           string `json:"app_status"`
+	KubernetesReachable bool   `json:"kubernetes_reachable"`
+	KubernetesVersion   string `json:"kubernetes_version,omitempty"`
+	KubernetesError     string `json:"kubernetes_error,omitempty"`
 }
 
 const (
@@ -28,13 +46,62 @@ func loggingMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func healthHandler(w http.ResponseWriter, r *http.Request) {
+func (a *appState) healthHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	resp := healthResponse{
+		AppStatus:           "ok",
+		KubernetesReachable: false,
+	}
+
+	if a.kubeClient == nil {
+		if a.kubeInitErr != "" {
+			resp.KubernetesError = a.kubeInitErr
+		} else {
+			resp.KubernetesError = "kubernetes client not initialized"
+		}
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+
+	version, err := a.kubeClient.Discovery().ServerVersion()
+	if err != nil {
+		resp.KubernetesError = err.Error()
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+
+	resp.KubernetesReachable = true
+	resp.KubernetesVersion = version.GitVersion
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func initKubernetesClient() (kubernetes.Interface, string) {
+	kubeconfigPath := os.Getenv("KUBECONFIG")
+
+	var cfg *rest.Config
+	var err error
+	if kubeconfigPath != "" {
+		cfg, err = clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+		if err != nil {
+			return nil, fmt.Sprintf("failed to load kubeconfig from KUBECONFIG (%s): %v", kubeconfigPath, err)
+		}
+	} else {
+		cfg, err = rest.InClusterConfig()
+		if err != nil {
+			return nil, fmt.Sprintf("failed to load in-cluster config: %v", err)
+		}
+	}
+
+	clientset, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Sprintf("failed to create kubernetes clientset: %v", err)
+	}
+
+	return clientset, ""
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
@@ -146,8 +213,18 @@ func namespaceHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	kubeClient, kubeInitErr := initKubernetesClient()
+	if kubeInitErr != "" {
+		log.Printf("kubernetes initialization warning: %s", kubeInitErr)
+	}
+
+	app := &appState{
+		kubeClient:  kubeClient,
+		kubeInitErr: kubeInitErr,
+	}
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("/health", healthHandler)
+	mux.HandleFunc("/health", app.healthHandler)
 	mux.HandleFunc("/namespaces/", namespaceHandler)
 
 	root := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
