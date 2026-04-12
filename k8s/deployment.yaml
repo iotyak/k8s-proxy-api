@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k8s-proxy-api
+  namespace: proxy-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: k8s-proxy-api
+  template:
+    metadata:
+      labels:
+        app: k8s-proxy-api
+    spec:
+      serviceAccountName: k8s-proxy-api
+      containers:
+        - name: k8s-proxy-api
+          image: k8s-proxy-api:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
