@@ -13,6 +13,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -127,6 +128,22 @@ func hasProxyAccessAllowed(dep *appsv1.Deployment) bool {
 		return false
 	}
 	return dep.Labels[proxyAccessLabelKey] == proxyAccessLabelValue
+}
+
+func buildRestartAnnotationPatch(restartedAt string) ([]byte, error) {
+	patch := map[string]any{
+		"spec": map[string]any{
+			"template": map[string]any{
+				"metadata": map[string]any{
+					"annotations": map[string]string{
+						"kubectl.kubernetes.io/restarted-at": restartedAt,
+					},
+				},
+			},
+		},
+	}
+
+	return json.Marshal(patch)
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
@@ -251,16 +268,45 @@ func (a *appState) namespaceHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		restartedAt := time.Now().UTC().Format(time.RFC3339)
+		patchBody, err := buildRestartAnnotationPatch(restartedAt)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{
+				"error":      "failed to build restart patch",
+				"namespace":  route.namespace,
+				"deployment": route.target,
+				"action":     "restart",
+				"details":    err.Error(),
+			})
+			return
+		}
+
+		if _, err := a.kubeClient.AppsV1().Deployments(route.namespace).Patch(
+			r.Context(),
+			route.target,
+			types.MergePatchType,
+			patchBody,
+			metav1.PatchOptions{},
+		); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{
+				"error":      "failed to patch deployment restart annotation",
+				"namespace":  route.namespace,
+				"deployment": route.target,
+				"action":     "restart",
+				"details":    err.Error(),
+			})
+			return
+		}
+
 		writeJSON(w, http.StatusOK, map[string]any{
-			"success":          true,
-			"authorized":       true,
-			"namespace":        route.namespace,
-			"deployment":       route.target,
-			"action":           "restart",
-			"message":          "authorization passed",
-			"next_step":        "restart not implemented yet",
-			"required_label":   proxyAccessLabelKey + "=" + proxyAccessLabelValue,
-			"deployment_label": deploymentLabel,
+			"success":        true,
+			"authorized":     true,
+			"namespace":      route.namespace,
+			"deployment":     route.target,
+			"action":         "restart",
+			"restarted_at":   restartedAt,
+			"message":        "deployment restart annotation patched",
+			"required_label": proxyAccessLabelKey + "=" + proxyAccessLabelValue,
 		})
 
 	case routeLogs:

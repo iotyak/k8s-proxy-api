@@ -51,10 +51,10 @@ Each task should be completed, tested, and committed before moving to the next o
 - [x] Return `403` when label is missing or not allowed
 
 ### Safe Deployment restart
-- [ ] Implement restart handler using a narrow patch
-- [ ] Patch `spec.template.metadata.annotations`
-- [ ] Set `kubectl.kubernetes.io/restarted-at`
-- [ ] Return clear JSON success/error responses
+- [x] Implement restart handler using a narrow patch
+- [x] Patch `spec.template.metadata.annotations`
+- [x] Set `kubectl.kubernetes.io/restarted-at`
+- [x] Return clear JSON success/error responses
 
 ### Pod ownership resolution
 - [ ] Add helper to resolve Pod ownership:
