@@ -17,31 +17,31 @@ Each task should be completed, tested, and committed before moving to the next o
 
 ## Current Task
 ### Add Kubernetes client-go with practical dev behavior
-- [ ] Add official `client-go` dependencies
-- [ ] Load Kubernetes config from `KUBECONFIG` when set
-- [ ] Fall back to in-cluster config when `KUBECONFIG` is not set
-- [ ] Create a Kubernetes clientset during startup
-- [ ] Do not crash the HTTP server just because Kubernetes is unreachable
-- [ ] Update `GET /health` to return:
-  - [ ] app status
-  - [ ] Kubernetes reachable true/false
-  - [ ] Kubernetes version when reachable
-  - [ ] clear error string when unreachable
-- [ ] Keep the server on stdlib `net/http`
-- [ ] Keep the code small and readable
-- [ ] Test locally using:
-  - [ ] `export KUBECONFIG=/etc/rancher/k3s/k3s.yaml`
-  - [ ] `go run .`
-  - [ ] `curl http://127.0.0.1:8080/health`
+- [x] Add official `client-go` dependencies
+- [x] Load Kubernetes config from `KUBECONFIG` when set
+- [x] Fall back to in-cluster config when `KUBECONFIG` is not set
+- [x] Create a Kubernetes clientset during startup
+- [x] Do not crash the HTTP server just because Kubernetes is unreachable
+- [x] Update `GET /health` to return:
+  - [x] app status
+  - [x] Kubernetes reachable true/false
+  - [x] Kubernetes version when reachable
+  - [x] clear error string when unreachable
+- [x] Keep the server on stdlib `net/http`
+- [x] Keep the code small and readable
+- [x] Test locally using:
+  - [x] `export KUBECONFIG=/etc/rancher/k3s/k3s.yaml`
+  - [x] `go run .`
+  - [x] `curl http://127.0.0.1:8080/health`
 
 ## Next Tasks
 ### Placeholder API structure
-- [ ] Add placeholder route:
-  - [ ] `POST /namespaces/{ns}/deployments/{name}/restart`
-- [ ] Add placeholder route:
-  - [ ] `GET /namespaces/{ns}/pods/{pod}/logs`
-- [ ] Parse path segments explicitly and safely
-- [ ] Return structured JSON errors for malformed paths
+- [x] Add placeholder route:
+  - [x] `POST /namespaces/{ns}/deployments/{name}/restart`
+- [x] Add placeholder route:
+  - [x] `GET /namespaces/{ns}/pods/{pod}/logs`
+- [x] Parse path segments explicitly and safely
+- [x] Return structured JSON errors for malformed paths
 
 ### Deployment authorization helper
 - [ ] Add helper to get a Deployment by namespace/name
