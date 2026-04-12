@@ -62,10 +62,10 @@ Each task should be completed, tested, and committed before moving to the next o
 - [x] Return clear errors when ownership cannot be resolved
 
 ### Pod logs
-- [ ] Implement `GET /namespaces/{ns}/pods/{pod}/logs`
-- [ ] Authorize access through owning Deployment label check
-- [ ] Stream logs directly to the HTTP response
-- [ ] Avoid buffering the entire log output in memory
+- [x] Implement `GET /namespaces/{ns}/pods/{pod}/logs`
+- [x] Authorize access through owning Deployment label check
+- [x] Stream logs directly to the HTTP response
+- [x] Avoid buffering the entire log output in memory
 
 ### Pod status
 - [ ] Add deployment-scoped endpoint:

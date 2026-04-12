@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -215,6 +217,34 @@ func buildRestartAnnotationPatch(restartedAt string) ([]byte, error) {
 	return json.Marshal(patch)
 }
 
+func (a *appState) streamPodLogs(ctx context.Context, namespace, podName string, w http.ResponseWriter) *routeError {
+	if a.kubeClient == nil {
+		errMsg := "kubernetes client not initialized"
+		if a.kubeInitErr != "" {
+			errMsg = errMsg + ": " + a.kubeInitErr
+		}
+		return &routeError{status: http.StatusServiceUnavailable, message: errMsg}
+	}
+
+	stream, err := a.kubeClient.CoreV1().Pods(namespace).GetLogs(podName, &corev1.PodLogOptions{}).Stream(ctx)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return &routeError{status: http.StatusNotFound, message: "pod not found"}
+		}
+		return &routeError{status: http.StatusServiceUnavailable, message: "failed to open pod logs stream", details: map[string]any{"details": err.Error()}}
+	}
+	defer stream.Close()
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+
+	if _, err := io.Copy(w, stream); err != nil {
+		log.Printf("failed while streaming pod logs for %s/%s: %v", namespace, podName, err)
+	}
+
+	return nil
+}
+
 func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -410,17 +440,37 @@ func (a *appState) namespaceHandler(w http.ResponseWriter, r *http.Request) {
 			deploymentLabel = dep.Labels[proxyAccessLabelKey]
 		}
 
-		writeJSON(w, http.StatusOK, map[string]any{
-			"namespace":            route.namespace,
-			"pod":                  podName,
-			"replicaset":           replicaSetName,
-			"deployment":           dep.Name,
-			"proxy_access_allowed": hasProxyAccessAllowed(dep),
-			"deployment_label":     deploymentLabel,
-			"required_label":       proxyAccessLabelKey + "=" + proxyAccessLabelValue,
-			"action":               "logs",
-			"logs":                 "not implemented yet",
-		})
+		if !hasProxyAccessAllowed(dep) {
+			writeJSON(w, http.StatusForbidden, map[string]any{
+				"error":            "deployment is not allowed for proxy access",
+				"namespace":        route.namespace,
+				"pod":              podName,
+				"replicaset":       replicaSetName,
+				"deployment":       dep.Name,
+				"action":           "logs",
+				"required_label":   proxyAccessLabelKey + "=" + proxyAccessLabelValue,
+				"deployment_label": deploymentLabel,
+			})
+			return
+		}
+
+		if err := a.streamPodLogs(r.Context(), route.namespace, podName, w); err != nil {
+			resp := map[string]any{
+				"error":      err.message,
+				"namespace":  route.namespace,
+				"pod":        podName,
+				"replicaset": replicaSetName,
+				"deployment": dep.Name,
+				"action":     "logs",
+			}
+			if err.details != nil {
+				for k, v := range err.details {
+					resp[k] = v
+				}
+			}
+			writeJSON(w, err.status, resp)
+			return
+		}
 
 	default:
 		writeJSONError(w, http.StatusNotFound, "endpoint not found")
