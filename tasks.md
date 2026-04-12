@@ -15,7 +15,7 @@ Each task should be completed, tested, and committed before moving to the next o
 - [x] Add basic request logging
 - [x] Confirm the server runs locally and responds on `127.0.0.1:8080`
 
-## Current Task
+## Complted
 ### Add Kubernetes client-go with practical dev behavior
 - [x] Add official `client-go` dependencies
 - [x] Load Kubernetes config from `KUBECONFIG` when set
@@ -34,7 +34,7 @@ Each task should be completed, tested, and committed before moving to the next o
   - [x] `go run .`
   - [x] `curl http://127.0.0.1:8080/health`
 
-## Next Tasks
+## Completed
 ### Placeholder API structure
 - [x] Add placeholder route:
   - [x] `POST /namespaces/{ns}/deployments/{name}/restart`
@@ -43,11 +43,12 @@ Each task should be completed, tested, and committed before moving to the next o
 - [x] Parse path segments explicitly and safely
 - [x] Return structured JSON errors for malformed paths
 
+## Current Tasks
 ### Deployment authorization helper
-- [ ] Add helper to get a Deployment by namespace/name
-- [ ] Add helper to verify label `proxy-access=allowed`
-- [ ] Return `404` when Deployment is missing
-- [ ] Return `403` when label is missing or not allowed
+- [x] Add helper to get a Deployment by namespace/name
+- [x] Add helper to verify label `proxy-access=allowed`
+- [x] Return `404` when Deployment is missing
+- [x] Return `403` when label is missing or not allowed
 
 ### Safe Deployment restart
 - [ ] Implement restart handler using a narrow patch

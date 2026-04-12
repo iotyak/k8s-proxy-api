@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -9,6 +10,9 @@ import (
 	"strings"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -35,6 +39,9 @@ type healthResponse struct {
 const (
 	routeRestart = "restart"
 	routeLogs    = "logs"
+
+	proxyAccessLabelKey   = "proxy-access"
+	proxyAccessLabelValue = "allowed"
 )
 
 func loggingMiddleware(next http.Handler) http.Handler {
@@ -102,6 +109,24 @@ func initKubernetesClient() (kubernetes.Interface, string) {
 	}
 
 	return clientset, ""
+}
+
+func (a *appState) getDeployment(ctx context.Context, namespace, name string) (*appsv1.Deployment, error) {
+	if a.kubeClient == nil {
+		if a.kubeInitErr != "" {
+			return nil, fmt.Errorf("kubernetes client not initialized: %s", a.kubeInitErr)
+		}
+		return nil, fmt.Errorf("kubernetes client not initialized")
+	}
+
+	return a.kubeClient.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+}
+
+func hasProxyAccessAllowed(dep *appsv1.Deployment) bool {
+	if dep == nil {
+		return false
+	}
+	return dep.Labels[proxyAccessLabelKey] == proxyAccessLabelValue
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
@@ -173,7 +198,7 @@ func parseNamespaceRoute(path string) (namespaceRoute, bool) {
 	}, true
 }
 
-func namespaceHandler(w http.ResponseWriter, r *http.Request) {
+func (a *appState) namespaceHandler(w http.ResponseWriter, r *http.Request) {
 	route, ok := parseNamespaceRoute(r.URL.Path)
 	if !ok {
 		writeJSONError(w, http.StatusBadRequest, "malformed path")
@@ -187,11 +212,55 @@ func namespaceHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		dep, err := a.getDeployment(r.Context(), route.namespace, route.target)
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				writeJSON(w, http.StatusNotFound, map[string]any{
+					"error":      "deployment not found",
+					"namespace":  route.namespace,
+					"deployment": route.target,
+					"action":     "restart",
+				})
+				return
+			}
+
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"error":      "failed to read deployment",
+				"namespace":  route.namespace,
+				"deployment": route.target,
+				"action":     "restart",
+				"details":    err.Error(),
+			})
+			return
+		}
+
+		deploymentLabel := ""
+		if dep.Labels != nil {
+			deploymentLabel = dep.Labels[proxyAccessLabelKey]
+		}
+
+		if !hasProxyAccessAllowed(dep) {
+			writeJSON(w, http.StatusForbidden, map[string]any{
+				"error":            "deployment is not allowed for proxy access",
+				"namespace":        route.namespace,
+				"deployment":       route.target,
+				"action":           "restart",
+				"required_label":   proxyAccessLabelKey + "=" + proxyAccessLabelValue,
+				"deployment_label": deploymentLabel,
+			})
+			return
+		}
+
 		writeJSON(w, http.StatusOK, map[string]any{
-			"namespace":  route.namespace,
-			"deployment": route.target,
-			"action":     "restart",
-			"success":    true,
+			"success":          true,
+			"authorized":       true,
+			"namespace":        route.namespace,
+			"deployment":       route.target,
+			"action":           "restart",
+			"message":          "authorization passed",
+			"next_step":        "restart not implemented yet",
+			"required_label":   proxyAccessLabelKey + "=" + proxyAccessLabelValue,
+			"deployment_label": deploymentLabel,
 		})
 
 	case routeLogs:
@@ -225,7 +294,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", app.healthHandler)
-	mux.HandleFunc("/namespaces/", namespaceHandler)
+	mux.HandleFunc("/namespaces/", app.namespaceHandler)
 
 	root := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/namespaces/") {
