@@ -16,6 +16,12 @@ export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 go run .
 ```
 
+Quick build-check:
+
+```bash
+gofmt -w main.go && go test ./...
+```
+
 The service listens on:
 - `http://127.0.0.1:8080`
 
