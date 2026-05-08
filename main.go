@@ -8,7 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
+
 	"strings"
 	"time"
 
@@ -18,8 +18,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
+
+
 	"github.com/iotyak/k8s-proxy-api/internal/handlers"
 	"github.com/iotyak/k8s-proxy-api/internal/k8sclient"
 )
