@@ -3,11 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
-	"os"
+
 	"strings"
 	"time"
 
@@ -17,8 +18,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
+
+
+	"github.com/iotyak/k8s-proxy-api/internal/handlers"
+	"github.com/iotyak/k8s-proxy-api/internal/k8sclient"
 )
 
 type namespaceRoute struct {
@@ -87,63 +90,9 @@ func loggingMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func (a *appState) healthHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
 
-	resp := healthResponse{
-		AppStatus:           "ok",
-		KubernetesReachable: false,
-	}
 
-	if a.kubeClient == nil {
-		if a.kubeInitErr != "" {
-			resp.KubernetesError = a.kubeInitErr
-		} else {
-			resp.KubernetesError = "kubernetes client not initialized"
-		}
-		writeJSON(w, http.StatusOK, resp)
-		return
-	}
 
-	version, err := a.kubeClient.Discovery().ServerVersion()
-	if err != nil {
-		resp.KubernetesError = err.Error()
-		writeJSON(w, http.StatusOK, resp)
-		return
-	}
-
-	resp.KubernetesReachable = true
-	resp.KubernetesVersion = version.GitVersion
-	writeJSON(w, http.StatusOK, resp)
-}
-
-func initKubernetesClient() (kubernetes.Interface, string) {
-	kubeconfigPath := os.Getenv("KUBECONFIG")
-
-	var cfg *rest.Config
-	var err error
-	if kubeconfigPath != "" {
-		cfg, err = clientcmd.BuildConfigFromFlags("", kubeconfigPath)
-		if err != nil {
-			return nil, fmt.Sprintf("failed to load kubeconfig from KUBECONFIG (%s): %v", kubeconfigPath, err)
-		}
-	} else {
-		cfg, err = rest.InClusterConfig()
-		if err != nil {
-			return nil, fmt.Sprintf("failed to load in-cluster config: %v", err)
-		}
-	}
-
-	clientset, err := kubernetes.NewForConfig(cfg)
-	if err != nil {
-		return nil, fmt.Sprintf("failed to create kubernetes clientset: %v", err)
-	}
-
-	return clientset, ""
-}
 
 func (a *appState) getDeployment(ctx context.Context, namespace, name string) (*appsv1.Deployment, error) {
 	if a.kubeClient == nil {
@@ -192,6 +141,10 @@ func writeRouteError(w http.ResponseWriter, routeErr *routeError, fields map[str
 }
 
 func (a *appState) getAuthorizedDeployment(ctx context.Context, namespace, name, action string, extra map[string]any, w http.ResponseWriter) (*appsv1.Deployment, bool) {
+	// Restart endpoint walkthrough note:
+	// - deployment lookup via Kubernetes client
+	// - proxy-access label authorization gate
+	// This helper returns endpoint-shaped JSON errors for each failure path.
 	dep, err := a.getDeployment(ctx, namespace, name)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -294,6 +247,9 @@ func (a *appState) resolvePodOwningDeployment(ctx context.Context, namespace, po
 }
 
 func buildRestartAnnotationPatch(restartedAt string) ([]byte, error) {
+	// Restart endpoint walkthrough note:
+	// patch spec.template.metadata.annotations["kubectl.kubernetes.io/restarted-at"]
+	// to trigger a Deployment rollout/restart.
 	patch := map[string]any{
 		"spec": map[string]any{
 			"template": map[string]any{
@@ -416,33 +372,33 @@ func writeJSONError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
-func splitPathStrict(path string) ([]string, bool) {
+func SplitPathStrict(path string) ([]string, error) {
 	if path == "" || path[0] != '/' {
-		return nil, false
+		return nil, errors.New("invalid path")
 	}
 	if strings.Contains(path, "//") {
-		return nil, false
+		return nil, errors.New("invalid path")
 	}
 	if len(path) > 1 && strings.HasSuffix(path, "/") {
-		return nil, false
+		return nil, errors.New("invalid path")
 	}
 
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) == 1 && parts[0] == "" {
-		return nil, false
+		return nil, errors.New("invalid path")
 	}
 	for _, p := range parts {
 		if p == "" || p == "." || p == ".." {
-			return nil, false
+			return nil, errors.New("invalid path")
 		}
 	}
 
-	return parts, true
+	return parts, nil
 }
 
 func parseNamespaceRoute(path string) (namespaceRoute, bool) {
-	parts, ok := splitPathStrict(path)
-	if !ok {
+	parts, err := SplitPathStrict(path)
+	if err != nil {
 		return namespaceRoute{}, false
 	}
 	if len(parts) < 3 || parts[0] != "api" || parts[1] != "v1" {
@@ -457,6 +413,8 @@ func parseNamespaceRoute(path string) (namespaceRoute, bool) {
 		action := parts[4]
 
 		if resource == "deployments" && action == "restart" {
+			// Restart endpoint walkthrough note: exact route shape match
+			// /api/v1/namespaces/{ns}/deployments/{name}/restart
 			return namespaceRoute{
 				namespace: ns,
 				target:    name,
@@ -489,6 +447,8 @@ func parseNamespaceRoute(path string) (namespaceRoute, bool) {
 }
 
 func (a *appState) namespaceHandler(w http.ResponseWriter, r *http.Request) {
+	// Restart endpoint walkthrough note:
+	// request -> route match -> namespace/name extraction occurs here.
 	route, ok := parseNamespaceRoute(r.URL.Path)
 	if !ok {
 		writeJSONError(w, http.StatusBadRequest, "malformed path")
@@ -497,16 +457,19 @@ func (a *appState) namespaceHandler(w http.ResponseWriter, r *http.Request) {
 
 	switch route.kind {
 	case routeRestart:
+		// Restart endpoint walkthrough note: method gate for restart route.
 		if r.Method != http.MethodPost {
 			writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 
+		// Restart endpoint walkthrough note: deployment lookup + proxy-access label check.
 		dep, ok := a.getAuthorizedDeployment(r.Context(), route.namespace, route.target, "restart", nil, w)
 		if !ok {
 			return
 		}
 
+		// Restart endpoint walkthrough note: build annotation patch with RFC3339 UTC timestamp.
 		restartedAt := time.Now().UTC().Format(time.RFC3339)
 		patchBody, err := buildRestartAnnotationPatch(restartedAt)
 		if err != nil {
@@ -520,6 +483,7 @@ func (a *appState) namespaceHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Restart endpoint walkthrough note: apply MergePatch to Deployment.
 		if _, err := a.kubeClient.AppsV1().Deployments(route.namespace).Patch(
 			r.Context(),
 			route.target,
@@ -537,6 +501,7 @@ func (a *appState) namespaceHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Restart endpoint walkthrough note: success JSON response.
 		writeJSON(w, http.StatusOK, map[string]any{
 			"success":          true,
 			"authorized":       true,
@@ -638,29 +603,32 @@ func (a *appState) namespaceHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	kubeClient, kubeInitErr := initKubernetesClient()
-	if kubeInitErr != "" {
+	kubeClient, err := k8sclient.NewClient()
+	var kubeInitErr string
+	if err != nil {
+		kubeInitErr = err.Error()
 		log.Printf("kubernetes initialization warning: %s", kubeInitErr)
 	}
-
 	app := &appState{
 		kubeClient:  kubeClient,
 		kubeInitErr: kubeInitErr,
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/health", app.healthHandler)
+	mux.HandleFunc("/health", handlers.HealthHandler)
 	mux.HandleFunc("/api/v1/namespaces/", app.namespaceHandler)
 
-	root := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/v1/namespaces/") {
-			if _, ok := splitPathStrict(r.URL.Path); !ok {
-				writeJSONError(w, http.StatusBadRequest, "malformed path")
-				return
+		root := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/api/v1/namespaces/") {
+				// Restart endpoint walkthrough note: strict path validation happens
+				// before route dispatch so malformed namespace paths fail fast with 400.
+				if _, err := SplitPathStrict(r.URL.Path); err != nil {
+					writeJSONError(w, http.StatusBadRequest, "malformed path")
+					return
+				}
 			}
-		}
-		mux.ServeHTTP(w, r)
-	})
+			mux.ServeHTTP(w, r)
+		})
 
 	addr := ":8080"
 	log.Printf("listening on %s", addr)
