@@ -1,0 +1,50 @@
+name: Bump Version
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  bump-version:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine version bump
+        id: bump
+        run: |
+          LABELS='${{ toJson(github.event.pull_request.labels.*.name) }}'
+          if echo "$LABELS" | grep -q "semver:major"; then
+            BUMP="major"
+          elif echo "$LABELS" | grep -q "semver:minor"; then
+            BUMP="minor"
+          elif echo "$LABELS" | grep -q "semver:patch"; then
+            BUMP="patch"
+          else
+            echo "No semver label found. Skipping version bump."
+            exit 0
+          fi
+          echo "bump=$BUMP" >> $GITHUB_OUTPUT
+
+      - name: Bump version
+        if: steps.bump.outputs.bump != ''
+        uses: mathieudutour/github-tag-action@v6
+        with:
+          custom_tag: ${{ steps.bump.outputs.bump }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          tag_prefix: v
+
+      - name: Update VERSION file
+        if: steps.bump.outputs.bump != ''
+        run: |
+          NEW_VERSION=$(cat VERSION | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+          echo $NEW_VERSION > VERSION
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add VERSION
+          git commit -m "chore: bump version to $NEW_VERSION"
+          git push
