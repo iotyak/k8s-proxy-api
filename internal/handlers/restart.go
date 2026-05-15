@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/iotyak/k8s-proxy-api/internal/auth"
 	appsv1 "k8s.io/api/apps/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -15,8 +16,6 @@ import (
 )
 
 const (
-	proxyAccessLabelKey   = "proxy-access"
-	proxyAccessLabelValue = "allowed"
 	restartedAtAnnotation = "kubectl.kubernetes.io/restartedAt"
 )
 
@@ -78,8 +77,8 @@ func RestartHandler(kubeClient kubernetes.Interface, kubeInitErr string, splitPa
 			"action":           "restart",
 			"restarted_at":     restartedAt,
 			"message":          "deployment restart annotation patched",
-			"required_label":   proxyAccessLabelKey + "=" + proxyAccessLabelValue,
-			"deployment_label": deploymentLabelValue(dep),
+			"required_label":   auth.ProxyAccessLabelKey + "=" + auth.ProxyAccessLabelValue,
+			"deployment_label": auth.DeploymentLabelValue(dep),
 		})
 	}
 }
@@ -104,19 +103,12 @@ func getAuthorizedDeployment(ctx context.Context, kubeClient kubernetes.Interfac
 		return nil, false
 	}
 
-	if dep.Labels[proxyAccessLabelKey] != proxyAccessLabelValue {
-		writeJSON(w, http.StatusForbidden, map[string]any{"error": "deployment is not allowed for proxy access", "namespace": namespace, "deployment": name, "action": "restart", "required_label": proxyAccessLabelKey + "=" + proxyAccessLabelValue, "deployment_label": deploymentLabelValue(dep)})
+	if !auth.CheckDeploymentAllowed(dep) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "deployment is not allowed for proxy access", "namespace": namespace, "deployment": name, "action": "restart", "required_label": auth.ProxyAccessLabelKey + "=" + auth.ProxyAccessLabelValue, "deployment_label": auth.DeploymentLabelValue(dep)})
 		return nil, false
 	}
 
 	return dep, true
-}
-
-func deploymentLabelValue(dep *appsv1.Deployment) string {
-	if dep == nil || dep.Labels == nil {
-		return ""
-	}
-	return dep.Labels[proxyAccessLabelKey]
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

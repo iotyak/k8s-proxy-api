@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/iotyak/k8s-proxy-api/internal/auth"
 	"strings"
 	"time"
 
@@ -74,9 +75,6 @@ const (
 	routeRestart = "restart"
 	routeLogs    = "logs"
 	routePods    = "pods-status"
-
-	proxyAccessLabelKey   = "proxy-access"
-	proxyAccessLabelValue = "allowed"
 )
 
 func loggingMiddleware(next http.Handler) http.Handler {
@@ -97,20 +95,6 @@ func (a *appState) getDeployment(ctx context.Context, namespace, name string) (*
 	}
 
 	return a.kubeClient.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
-}
-
-func hasProxyAccessAllowed(dep *appsv1.Deployment) bool {
-	if dep == nil {
-		return false
-	}
-	return dep.Labels[proxyAccessLabelKey] == proxyAccessLabelValue
-}
-
-func deploymentLabelValue(dep *appsv1.Deployment) string {
-	if dep == nil || dep.Labels == nil {
-		return ""
-	}
-	return dep.Labels[proxyAccessLabelKey]
 }
 
 func writeJSONErrorFields(w http.ResponseWriter, status int, msg string, fields map[string]any) {
@@ -158,13 +142,13 @@ func (a *appState) getAuthorizedDeployment(ctx context.Context, namespace, name,
 		return nil, false
 	}
 
-	deploymentLabel := deploymentLabelValue(dep)
-	if !hasProxyAccessAllowed(dep) {
+	deploymentLabel := auth.DeploymentLabelValue(dep)
+	if !auth.CheckDeploymentAllowed(dep) {
 		fields := map[string]any{
 			"namespace":        namespace,
 			"deployment":       name,
 			"action":           action,
-			"required_label":   proxyAccessLabelKey + "=" + proxyAccessLabelValue,
+			"required_label":   auth.ProxyAccessLabelKey + "=" + auth.ProxyAccessLabelValue,
 			"deployment_label": deploymentLabel,
 		}
 		for k, v := range extra {
@@ -457,16 +441,16 @@ func (a *appState) namespaceHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		deploymentLabel := deploymentLabelValue(dep)
+		deploymentLabel := auth.DeploymentLabelValue(dep)
 
-		if !hasProxyAccessAllowed(dep) {
+		if !auth.CheckDeploymentAllowed(dep) {
 			writeJSONErrorFields(w, http.StatusForbidden, "deployment is not allowed for proxy access", map[string]any{
 				"namespace":        route.namespace,
 				"pod":              podName,
 				"replicaset":       replicaSetName,
 				"deployment":       dep.Name,
 				"action":           "logs",
-				"required_label":   proxyAccessLabelKey + "=" + proxyAccessLabelValue,
+				"required_label":   auth.ProxyAccessLabelKey + "=" + auth.ProxyAccessLabelValue,
 				"deployment_label": deploymentLabel,
 			})
 			return
@@ -494,7 +478,7 @@ func (a *appState) namespaceHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		deploymentLabel := deploymentLabelValue(dep)
+		deploymentLabel := auth.DeploymentLabelValue(dep)
 
 		pods, selector, routeErr := a.listDeploymentPodsStatus(r.Context(), route.namespace, dep)
 		if routeErr != nil {
@@ -513,7 +497,7 @@ func (a *appState) namespaceHandler(w http.ResponseWriter, r *http.Request) {
 			"selector":         selector,
 			"pod_count":        len(pods),
 			"deployment_label": deploymentLabel,
-			"required_label":   proxyAccessLabelKey + "=" + proxyAccessLabelValue,
+			"required_label":   auth.ProxyAccessLabelKey + "=" + auth.ProxyAccessLabelValue,
 			"pods":             pods,
 		})
 
