@@ -419,87 +419,12 @@ func (a *appState) namespaceHandler(w http.ResponseWriter, r *http.Request) {
 		handlers.RestartHandler(a.kubeClient, a.kubeInitErr, SplitPathStrict, time.Now).ServeHTTP(w, r)
 
 	case routeLogs:
-		if r.Method != http.MethodGet {
-			writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
-			return
-		}
-
-		podName, replicaSetName, dep, routeErr := a.resolvePodOwningDeployment(r.Context(), route.namespace, route.target)
-		if routeErr != nil {
-			fields := map[string]any{
-				"namespace": route.namespace,
-				"pod":       route.target,
-				"action":    "logs",
-			}
-			if podName != "" {
-				fields["pod"] = podName
-			}
-			if replicaSetName != "" {
-				fields["replicaset"] = replicaSetName
-			}
-			writeRouteError(w, routeErr, fields)
-			return
-		}
-
-		deploymentLabel := auth.DeploymentLabelValue(dep)
-
-		if !auth.CheckDeploymentAllowed(dep) {
-			writeJSONErrorFields(w, http.StatusForbidden, "deployment is not allowed for proxy access", map[string]any{
-				"namespace":        route.namespace,
-				"pod":              podName,
-				"replicaset":       replicaSetName,
-				"deployment":       dep.Name,
-				"action":           "logs",
-				"required_label":   auth.ProxyAccessLabelKey + "=" + auth.ProxyAccessLabelValue,
-				"deployment_label": deploymentLabel,
-			})
-			return
-		}
-
-		if err := a.streamPodLogs(r.Context(), route.namespace, podName, w); err != nil {
-			writeRouteError(w, err, map[string]any{
-				"namespace":  route.namespace,
-				"pod":        podName,
-				"replicaset": replicaSetName,
-				"deployment": dep.Name,
-				"action":     "logs",
-			})
-			return
-		}
+		handlers.LogsHandler(a.kubeClient, a.kubeInitErr, SplitPathStrict, func(ns, pod string) (io.ReadCloser, error) {
+			return a.kubeClient.CoreV1().Pods(ns).GetLogs(pod, &corev1.PodLogOptions{}).Stream(r.Context())
+		}).ServeHTTP(w, r)
 
 	case routePods:
-		if r.Method != http.MethodGet {
-			writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
-			return
-		}
-
-		dep, ok := a.getAuthorizedDeployment(r.Context(), route.namespace, route.target, "pods-status", nil, w)
-		if !ok {
-			return
-		}
-
-		deploymentLabel := auth.DeploymentLabelValue(dep)
-
-		pods, selector, routeErr := a.listDeploymentPodsStatus(r.Context(), route.namespace, dep)
-		if routeErr != nil {
-			writeRouteError(w, routeErr, map[string]any{
-				"namespace":  route.namespace,
-				"deployment": route.target,
-				"action":     "pods-status",
-			})
-			return
-		}
-
-		writeJSON(w, http.StatusOK, map[string]any{
-			"namespace":        route.namespace,
-			"deployment":       route.target,
-			"action":           "pods-status",
-			"selector":         selector,
-			"pod_count":        len(pods),
-			"deployment_label": deploymentLabel,
-			"required_label":   auth.ProxyAccessLabelKey + "=" + auth.ProxyAccessLabelValue,
-			"pods":             pods,
-		})
+		handlers.StatusHandler(a.kubeClient, a.kubeInitErr, SplitPathStrict).ServeHTTP(w, r)
 
 	default:
 		writeJSONError(w, http.StatusNotFound, "endpoint not found")
