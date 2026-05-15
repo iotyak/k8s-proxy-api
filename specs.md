@@ -25,8 +25,33 @@ Local: `export KUBECONFIG=/etc/rancher/k3s/k3s.yaml && go run .`
 |--------|------|----------|-------|
 | GET | `/health` | JSON `{app_status:"ok", kubernetes_reachable:bool, version/error}` | Connectivity. |
 | POST | `/api/v1/namespaces/{ns}/deployments/{name}/restart` | 200 JSON or err (404/403/5xx) | Patch restart annot. Label req'd. |
-| GET | `/api/v1/namespaces/{ns}/pods/{pod}/logs` | text stream or JSON err | Latest logs. |
+| GET | `/api/v1/namespaces/{ns}/pods/{pod}/logs` | text stream or JSON err | Log options supported; default `tailLines=100`. |
 | GET | `/api/v1/namespaces/{ns}/deployments/{name}/pods/status` | JSON pod[] `{name,phase,ip,conditions[],containers[],ready/total,restarts}` | Selector pods. Label req'd. |
+
+### Logs Endpoint Query Parameters
+`GET /api/v1/namespaces/{ns}/pods/{pod}/logs`
+
+- `tailLines` (int): return the most recent N log lines. Default: `100`.
+- `sinceSeconds` (int): return only logs newer than N seconds.
+- `follow` (bool): stream logs continuously until client disconnect.
+- `limitBytes` (int): cap bytes returned by the log response.
+- `timestamps` (bool): include timestamps on each line.
+
+Examples:
+
+```bash
+# Default (latest 100 lines)
+curl -i "http://127.0.0.1:8080/api/v1/namespaces/proxy-test/pods/<POD_NAME>/logs"
+
+# Tail more lines
+curl -i "http://127.0.0.1:8080/api/v1/namespaces/proxy-test/pods/<POD_NAME>/logs?tailLines=500"
+
+# Last 5 minutes, include timestamps
+curl -i "http://127.0.0.1:8080/api/v1/namespaces/proxy-test/pods/<POD_NAME>/logs?sinceSeconds=300&timestamps=true"
+
+# Follow stream with 1MiB cap for initial burst
+curl -i "http://127.0.0.1:8080/api/v1/namespaces/proxy-test/pods/<POD_NAME>/logs?follow=true&limitBytes=1048576"
+```
 
 ## K8s Flow
 - Client: `internal/k8sclient` (KUBECONFIG/in-cluster).

@@ -3,9 +3,11 @@ package handlers
 import (
 	"io"
 	"net/http"
+	"strconv"
 
 	"github.com/iotyak/k8s-proxy-api/internal/auth"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -156,9 +158,14 @@ func streamPodLogs(r *http.Request, kubeClient kubernetes.Interface, kubeInitErr
 		return &logsRouteError{status: http.StatusServiceUnavailable, message: errMsg}
 	}
 
+	logOptions, queryErr := podLogOptionsFromQuery(r)
+	if queryErr != nil {
+		return queryErr
+	}
+
 	if openLogStream == nil {
 		openLogStream = func(ns, pod string) (io.ReadCloser, error) {
-			return kubeClient.CoreV1().Pods(ns).GetLogs(pod, nil).Stream(r.Context())
+			return kubeClient.CoreV1().Pods(ns).GetLogs(pod, logOptions).Stream(r.Context())
 		}
 	}
 
@@ -176,4 +183,51 @@ func streamPodLogs(r *http.Request, kubeClient kubernetes.Interface, kubeInitErr
 	_, _ = io.Copy(w, stream)
 
 	return nil
+}
+
+func podLogOptionsFromQuery(r *http.Request) (*corev1.PodLogOptions, *logsRouteError) {
+	query := r.URL.Query()
+	options := &corev1.PodLogOptions{}
+
+	if rawTailLines := query.Get("tailLines"); rawTailLines != "" {
+		tailLines, err := strconv.ParseInt(rawTailLines, 10, 64)
+		if err != nil || tailLines <= 0 {
+			return nil, &logsRouteError{status: http.StatusBadRequest, message: "invalid query parameter", details: map[string]any{"parameter": "tailLines", "value": rawTailLines}}
+		}
+		options.TailLines = &tailLines
+	}
+
+	if rawSinceSeconds := query.Get("sinceSeconds"); rawSinceSeconds != "" {
+		sinceSeconds, err := strconv.ParseInt(rawSinceSeconds, 10, 64)
+		if err != nil || sinceSeconds < 0 {
+			return nil, &logsRouteError{status: http.StatusBadRequest, message: "invalid query parameter", details: map[string]any{"parameter": "sinceSeconds", "value": rawSinceSeconds}}
+		}
+		options.SinceSeconds = &sinceSeconds
+	}
+
+	if rawFollow := query.Get("follow"); rawFollow != "" {
+		follow, err := strconv.ParseBool(rawFollow)
+		if err != nil {
+			return nil, &logsRouteError{status: http.StatusBadRequest, message: "invalid query parameter", details: map[string]any{"parameter": "follow", "value": rawFollow}}
+		}
+		options.Follow = follow
+	}
+
+	if rawLimitBytes := query.Get("limitBytes"); rawLimitBytes != "" {
+		limitBytes, err := strconv.ParseInt(rawLimitBytes, 10, 64)
+		if err != nil || limitBytes <= 0 {
+			return nil, &logsRouteError{status: http.StatusBadRequest, message: "invalid query parameter", details: map[string]any{"parameter": "limitBytes", "value": rawLimitBytes}}
+		}
+		options.LimitBytes = &limitBytes
+	}
+
+	if rawTimestamps := query.Get("timestamps"); rawTimestamps != "" {
+		timestamps, err := strconv.ParseBool(rawTimestamps)
+		if err != nil {
+			return nil, &logsRouteError{status: http.StatusBadRequest, message: "invalid query parameter", details: map[string]any{"parameter": "timestamps", "value": rawTimestamps}}
+		}
+		options.Timestamps = timestamps
+	}
+
+	return options, nil
 }

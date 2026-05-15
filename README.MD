@@ -19,11 +19,27 @@ go run .
 Quick build-check:
 
 ```bash
-gofmt -w main.go && go test ./...
+gofmt -w . && go test ./...
+```
+
+Build the binary:
+
+```bash
+go build .
 ```
 
 The service listens on:
 - `http://127.0.0.1:8080`
+
+## Project Structure
+
+- Single binary entrypoint (`main.go`)
+- Modular packages:
+  - `internal/handlers` — endpoint logic (health, restart, logs, status)
+  - `internal/auth` — label-based authorization
+  - `internal/k8sclient` — Kubernetes client initialization
+
+See `specs.md` and `AGENTS.md` for full API contract and contributor guidelines.
 
 ## Routes
 
@@ -56,7 +72,35 @@ Logs:
 ```bash
 curl -i http://127.0.0.1:8080/api/v1/namespaces/proxy-test/pods/does-not-exist/logs
 curl -i http://127.0.0.1:8080/api/v1/namespaces/proxy-test/pods/<POD_NAME>/logs
+
+# Default behavior: tailLines=100 (latest 100 lines)
+curl -i "http://127.0.0.1:8080/api/v1/namespaces/proxy-test/pods/<POD_NAME>/logs"
+
+# Last 500 lines
+curl -i "http://127.0.0.1:8080/api/v1/namespaces/proxy-test/pods/<POD_NAME>/logs?tailLines=500"
+
+# Logs from last 10 minutes
+curl -i "http://127.0.0.1:8080/api/v1/namespaces/proxy-test/pods/<POD_NAME>/logs?sinceSeconds=600"
+
+# Stream live logs (follow)
+curl -i "http://127.0.0.1:8080/api/v1/namespaces/proxy-test/pods/<POD_NAME>/logs?follow=true"
+
+# Cap total bytes returned
+curl -i "http://127.0.0.1:8080/api/v1/namespaces/proxy-test/pods/<POD_NAME>/logs?limitBytes=1048576"
+
+# Include per-line RFC3339 timestamps
+curl -i "http://127.0.0.1:8080/api/v1/namespaces/proxy-test/pods/<POD_NAME>/logs?timestamps=true"
+
+# Combine options for high-volume debugging
+curl -i "http://127.0.0.1:8080/api/v1/namespaces/proxy-test/pods/<POD_NAME>/logs?tailLines=200&sinceSeconds=300&timestamps=true"
 ```
+
+Logs query parameters:
+- `tailLines` (int): number of recent lines to return; default is `100`.
+- `sinceSeconds` (int): only return logs newer than N seconds.
+- `follow` (bool): stream logs until the client disconnects.
+- `limitBytes` (int): cap the number of bytes returned.
+- `timestamps` (bool): include timestamps on each log line.
 
 Pod status:
 
@@ -95,3 +139,4 @@ kubectl -n proxy-test port-forward svc/k8s-proxy-api 8080:8080
 ```
 
 Then run the curl examples above against `http://127.0.0.1:8080`.
+```
