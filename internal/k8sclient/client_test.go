@@ -1,15 +1,15 @@
 package k8sclient
 
 import (
-    "testing"
+	"testing"
 )
 
 func TestNewClient(t *testing.T) {
-    client, err := NewClient()
-    if err != nil {
-        t.Error("expected no error")
-    }
-    if client == nil {
-        t.Error("expected non-nil client")
-    }
+	client, err := NewClient()
+	if err != nil {
+		t.Error("expected no error")
+	}
+	if client == nil {
+		t.Error("expected non-nil client")
+	}
 }

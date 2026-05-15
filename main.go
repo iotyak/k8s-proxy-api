@@ -30,8 +30,8 @@ type namespaceRoute struct {
 }
 
 type appState struct {
-	kubeClient  kubernetes.Interface
-	kubeInitErr string
+	kubeClient    kubernetes.Interface
+	kubeInitErr   string
 	openLogStream func(string, string) (io.ReadCloser, error)
 }
 

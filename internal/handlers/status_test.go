@@ -57,7 +57,7 @@ func TestStatusHandlerReturnsPodStatuses(t *testing.T) {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "testns", Name: "demo-pod", Labels: map[string]string{"app": "demo"}},
 		Status: corev1.PodStatus{
-			Phase: corev1.PodRunning,
+			Phase:             corev1.PodRunning,
 			ContainerStatuses: []corev1.ContainerStatus{{Name: "app", Ready: true, RestartCount: 2}},
 		},
 	}
