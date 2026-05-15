@@ -1,7 +1,7 @@
 # k8s-proxy-api Specs
 
 ## Overview
-`k8s-proxy-api` is a minimal Go HTTP proxy for scoped Kubernetes ops (deploy restart, pod logs/status). Not a full K8s API—tight control plane for internal UIs/services.
+`k8s-proxy-api` is a minimal Go HTTP proxy for scoped Kubernetes ops (deploy restart/delete, pod logs/status). Not a full K8s API; tight control plane for internal UIs/services.
 
 Single binary (`go build`), stdlib `net/http`, client-go. Strict paths, label auth (`proxy-access=allowed`).
 
@@ -25,8 +25,39 @@ Local: `export KUBECONFIG=/etc/rancher/k3s/k3s.yaml && go run .`
 |--------|------|----------|-------|
 | GET | `/health` | JSON `{app_status:"ok", kubernetes_reachable:bool, version/error}` | Connectivity. |
 | POST | `/api/v1/namespaces/{ns}/deployments/{name}/restart` | 200 JSON or err (404/403/5xx) | Patch restart annot. Label req'd. |
+| DELETE | `/api/v1/namespaces/{ns}/deployments/{name}/delete` | 200 JSON or err (400/404/403/5xx) | Delete deployment. Label req'd. |
 | GET | `/api/v1/namespaces/{ns}/pods/{pod}/logs` | text stream or JSON err | Log options supported; default `tailLines=100`. |
 | GET | `/api/v1/namespaces/{ns}/deployments/{name}/pods/status` | JSON pod[] `{name,phase,ip,conditions[],containers[],ready/total,restarts}` | Selector pods. Label req'd. |
+
+### Delete Deployment Endpoint
+`DELETE /api/v1/namespaces/{ns}/deployments/{name}/delete`
+
+Example:
+
+```bash
+curl -i -X DELETE "http://127.0.0.1:8080/api/v1/namespaces/proxy-test/deployments/hello-allowed/delete"
+```
+
+Success response (`200`, JSON):
+
+```json
+{
+  "success": true,
+  "authorized": true,
+  "namespace": "proxy-test",
+  "deployment": "hello-allowed",
+  "action": "delete",
+  "message": "deployment deleted",
+  "required_label": "proxy-access=allowed",
+  "deployment_label": "allowed"
+}
+```
+
+Error responses (JSON):
+- `400`: `{"error":"malformed path"}`
+- `403`: deployment is not allowed for proxy access; includes `required_label` and `deployment_label`
+- `404`: deployment not found
+- `500`: failed to read/delete deployment with `details`
 
 ### Logs Endpoint Query Parameters
 `GET /api/v1/namespaces/{ns}/pods/{pod}/logs`

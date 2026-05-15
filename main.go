@@ -73,9 +73,10 @@ type healthResponse struct {
 }
 
 const (
-	routeRestart = "restart"
-	routeLogs    = "logs"
-	routePods    = "pods-status"
+	RouteRestart = "restart"
+	RouteLogs    = "logs"
+	RoutePods    = "pods-status"
+	RouteDelete  = "delete"
 )
 
 func loggingMiddleware(next http.Handler) http.Handler {
@@ -372,20 +373,27 @@ func parseNamespaceRoute(path string) (namespaceRoute, bool) {
 		name := parts[3]
 		action := parts[4]
 
-		if resource == "deployments" && action == "restart" {
+		if resource == "deployments" && action == RouteRestart {
 			// Restart endpoint walkthrough note: exact route shape match
 			// /api/v1/namespaces/{ns}/deployments/{name}/restart
 			return namespaceRoute{
 				namespace: ns,
 				target:    name,
-				kind:      routeRestart,
+				kind:      RouteRestart,
 			}, true
 		}
-		if resource == "pods" && action == "logs" {
+		if resource == "deployments" && action == RouteDelete {
 			return namespaceRoute{
 				namespace: ns,
 				target:    name,
-				kind:      routeLogs,
+				kind:      RouteDelete,
+			}, true
+		}
+		if resource == "pods" && action == RouteLogs {
+			return namespaceRoute{
+				namespace: ns,
+				target:    name,
+				kind:      RouteLogs,
 			}, true
 		}
 
@@ -399,7 +407,7 @@ func parseNamespaceRoute(path string) (namespaceRoute, bool) {
 		return namespaceRoute{
 			namespace: parts[1],
 			target:    parts[3],
-			kind:      routePods,
+			kind:      RoutePods,
 		}, true
 	}
 
@@ -416,10 +424,10 @@ func (a *appState) namespaceHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch route.kind {
-	case routeRestart:
+	case RouteRestart:
 		handlers.RestartHandler(a.kubeClient, a.kubeInitErr, SplitPathStrict, time.Now).ServeHTTP(w, r)
 
-	case routeLogs:
+	case RouteLogs:
 		openLogStream := a.openLogStream
 		if openLogStream == nil {
 			openLogStream = func(ns, pod string) (io.ReadCloser, error) {
@@ -428,8 +436,11 @@ func (a *appState) namespaceHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		handlers.LogsHandler(a.kubeClient, a.kubeInitErr, SplitPathStrict, openLogStream).ServeHTTP(w, r)
 
-	case routePods:
+	case RoutePods:
 		handlers.StatusHandler(a.kubeClient, a.kubeInitErr, SplitPathStrict).ServeHTTP(w, r)
+
+	case RouteDelete:
+		handlers.DeleteDeploymentHandler(a.kubeClient, a.kubeInitErr, SplitPathStrict).ServeHTTP(w, r)
 
 	default:
 		writeJSONError(w, http.StatusNotFound, "endpoint not found")
