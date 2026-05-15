@@ -32,6 +32,7 @@ type namespaceRoute struct {
 type appState struct {
 	kubeClient  kubernetes.Interface
 	kubeInitErr string
+	openLogStream func(string, string) (io.ReadCloser, error)
 }
 
 type routeError struct {
@@ -419,9 +420,13 @@ func (a *appState) namespaceHandler(w http.ResponseWriter, r *http.Request) {
 		handlers.RestartHandler(a.kubeClient, a.kubeInitErr, SplitPathStrict, time.Now).ServeHTTP(w, r)
 
 	case routeLogs:
-		handlers.LogsHandler(a.kubeClient, a.kubeInitErr, SplitPathStrict, func(ns, pod string) (io.ReadCloser, error) {
-			return a.kubeClient.CoreV1().Pods(ns).GetLogs(pod, &corev1.PodLogOptions{}).Stream(r.Context())
-		}).ServeHTTP(w, r)
+		openLogStream := a.openLogStream
+		if openLogStream == nil {
+			openLogStream = func(ns, pod string) (io.ReadCloser, error) {
+				return a.kubeClient.CoreV1().Pods(ns).GetLogs(pod, &corev1.PodLogOptions{}).Stream(r.Context())
+			}
+		}
+		handlers.LogsHandler(a.kubeClient, a.kubeInitErr, SplitPathStrict, openLogStream).ServeHTTP(w, r)
 
 	case routePods:
 		handlers.StatusHandler(a.kubeClient, a.kubeInitErr, SplitPathStrict).ServeHTTP(w, r)
