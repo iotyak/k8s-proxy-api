@@ -16,9 +16,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
-
 
 	"github.com/iotyak/k8s-proxy-api/internal/handlers"
 	"github.com/iotyak/k8s-proxy-api/internal/k8sclient"
@@ -89,10 +87,6 @@ func loggingMiddleware(next http.Handler) http.Handler {
 		log.Printf("completed in %s", time.Since(start))
 	})
 }
-
-
-
-
 
 func (a *appState) getDeployment(ctx context.Context, namespace, name string) (*appsv1.Deployment, error) {
 	if a.kubeClient == nil {
@@ -244,25 +238,6 @@ func (a *appState) resolvePodOwningDeployment(ctx context.Context, namespace, po
 	}
 
 	return pod.Name, rs.Name, dep, nil
-}
-
-func buildRestartAnnotationPatch(restartedAt string) ([]byte, error) {
-	// Restart endpoint walkthrough note:
-	// patch spec.template.metadata.annotations["kubectl.kubernetes.io/restarted-at"]
-	// to trigger a Deployment rollout/restart.
-	patch := map[string]any{
-		"spec": map[string]any{
-			"template": map[string]any{
-				"metadata": map[string]any{
-					"annotations": map[string]string{
-						"kubectl.kubernetes.io/restarted-at": restartedAt,
-					},
-				},
-			},
-		},
-	}
-
-	return json.Marshal(patch)
 }
 
 func (a *appState) streamPodLogs(ctx context.Context, namespace, podName string, w http.ResponseWriter) *routeError {
@@ -457,62 +432,7 @@ func (a *appState) namespaceHandler(w http.ResponseWriter, r *http.Request) {
 
 	switch route.kind {
 	case routeRestart:
-		// Restart endpoint walkthrough note: method gate for restart route.
-		if r.Method != http.MethodPost {
-			writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
-			return
-		}
-
-		// Restart endpoint walkthrough note: deployment lookup + proxy-access label check.
-		dep, ok := a.getAuthorizedDeployment(r.Context(), route.namespace, route.target, "restart", nil, w)
-		if !ok {
-			return
-		}
-
-		// Restart endpoint walkthrough note: build annotation patch with RFC3339 UTC timestamp.
-		restartedAt := time.Now().UTC().Format(time.RFC3339)
-		patchBody, err := buildRestartAnnotationPatch(restartedAt)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{
-				"error":      "failed to build restart patch",
-				"namespace":  route.namespace,
-				"deployment": route.target,
-				"action":     "restart",
-				"details":    err.Error(),
-			})
-			return
-		}
-
-		// Restart endpoint walkthrough note: apply MergePatch to Deployment.
-		if _, err := a.kubeClient.AppsV1().Deployments(route.namespace).Patch(
-			r.Context(),
-			route.target,
-			types.MergePatchType,
-			patchBody,
-			metav1.PatchOptions{},
-		); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{
-				"error":      "failed to patch deployment restart annotation",
-				"namespace":  route.namespace,
-				"deployment": route.target,
-				"action":     "restart",
-				"details":    err.Error(),
-			})
-			return
-		}
-
-		// Restart endpoint walkthrough note: success JSON response.
-		writeJSON(w, http.StatusOK, map[string]any{
-			"success":          true,
-			"authorized":       true,
-			"namespace":        route.namespace,
-			"deployment":       route.target,
-			"action":           "restart",
-			"restarted_at":     restartedAt,
-			"message":          "deployment restart annotation patched",
-			"required_label":   proxyAccessLabelKey + "=" + proxyAccessLabelValue,
-			"deployment_label": deploymentLabelValue(dep),
-		})
+		handlers.RestartHandler(a.kubeClient, a.kubeInitErr, SplitPathStrict, time.Now).ServeHTTP(w, r)
 
 	case routeLogs:
 		if r.Method != http.MethodGet {
@@ -618,17 +538,17 @@ func main() {
 	mux.HandleFunc("/health", handlers.HealthHandler)
 	mux.HandleFunc("/api/v1/namespaces/", app.namespaceHandler)
 
-		root := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if strings.HasPrefix(r.URL.Path, "/api/v1/namespaces/") {
-				// Restart endpoint walkthrough note: strict path validation happens
-				// before route dispatch so malformed namespace paths fail fast with 400.
-				if _, err := SplitPathStrict(r.URL.Path); err != nil {
-					writeJSONError(w, http.StatusBadRequest, "malformed path")
-					return
-				}
+	root := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/namespaces/") {
+			// Restart endpoint walkthrough note: strict path validation happens
+			// before route dispatch so malformed namespace paths fail fast with 400.
+			if _, err := SplitPathStrict(r.URL.Path); err != nil {
+				writeJSONError(w, http.StatusBadRequest, "malformed path")
+				return
 			}
-			mux.ServeHTTP(w, r)
-		})
+		}
+		mux.ServeHTTP(w, r)
+	})
 
 	addr := ":8080"
 	log.Printf("listening on %s", addr)
