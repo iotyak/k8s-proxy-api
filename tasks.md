@@ -68,34 +68,7 @@ Status: Tasks 1-5 done/partial (testify, handlers dir/health, main_test paths, k
   - Commit: `d20d315 feat: add DELETE /api/v1/namespaces/{ns}/deployments/{name}/delete endpoint`
 
 ## Namespace Listing Endpoints
-- [ ] **Task 13: Add namespace-level listing endpoints**
+- [x] **Task 13: Add namespace-level listing endpoints**
   - Add route constants (`RouteDeployments`, `RoutePodsList`)
   - Update path parsing in `main.go`
-  - Create `ListDeploymentsHandler` and `ListPodsHandler`
-  - Add unit tests for both handlers
-  - Wire handlers into `main.go`
-  - Update `README.MD` and `specs.md`
-  - Commit: `feat: add namespace deployments and pods listing endpoints`
-
-## Packaging & Deploy (Ongoing)
-- [x] Dockerfile? (multi-stage, nonroot)
-- [x] Manifests: `k8s/proxy-test.yaml` (SA/Role/Deploy/Svc)
-
-## Guardrails (Ongoing)
-- [x] No 3rd-party routers
-- [x] Narrow K8s scope/RBAC
-- [x] Explicit auth
-- [ ] Readable (post-refactor)
-- [ ] Test phases (add cover 80%+)
-- [ ] Incremental commits
-
-## Suggested Commit Milestones
-- [x] `feat: add kube client...`
-- [x] `feat: add restart/logs/status`
-- [x] `refactor: extract handlers/k8sclient/auth +tests`
-- [x] `test: integration + cover`
-- [x] `feat: improve logs endpoint for large volumes`
-- [x] `feat: add deployment delete endpoint`
-- [ ] `feat: add namespace listing endpoints`
-- [ ] `chore: docker/manifests`
-```
+  - Create `ListDeployments
