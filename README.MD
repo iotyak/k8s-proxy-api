@@ -19,11 +19,27 @@ go run .
 Quick build-check:
 
 ```bash
-gofmt -w main.go && go test ./...
+gofmt -w . && go test ./...
+```
+
+Build the binary:
+
+```bash
+go build .
 ```
 
 The service listens on:
 - `http://127.0.0.1:8080`
+
+## Project Structure
+
+- Single binary entrypoint (`main.go`)
+- Modular packages:
+  - `internal/handlers` — endpoint logic (health, restart, logs, status)
+  - `internal/auth` — label-based authorization
+  - `internal/k8sclient` — Kubernetes client initialization
+
+See `specs.md` and `AGENTS.md` for full API contract and contributor guidelines.
 
 ## Routes
 
@@ -32,6 +48,7 @@ Health route:
 
 Operational routes (versioned):
 - `POST /api/v1/namespaces/{ns}/deployments/{name}/restart`
+- `DELETE /api/v1/namespaces/{ns}/deployments/{name}/delete`
 - `GET /api/v1/namespaces/{ns}/pods/{pod}/logs`
 - `GET /api/v1/namespaces/{ns}/deployments/{name}/pods/status`
 
@@ -51,12 +68,69 @@ curl -i -X POST http://127.0.0.1:8080/api/v1/namespaces/proxy-test/deployments/h
 curl -i -X POST http://127.0.0.1:8080/api/v1/namespaces/proxy-test/deployments/hello-allowed/restart
 ```
 
+Delete deployment:
+
+```bash
+curl -i -X DELETE http://127.0.0.1:8080/api/v1/namespaces/proxy-test/deployments/does-not-exist/delete
+curl -i -X DELETE http://127.0.0.1:8080/api/v1/namespaces/proxy-test/deployments/hello/delete
+curl -i -X DELETE http://127.0.0.1:8080/api/v1/namespaces/proxy-test/deployments/hello-allowed/delete
+```
+
+Delete success response format (`200` JSON):
+
+```json
+{
+  "success": true,
+  "authorized": true,
+  "namespace": "proxy-test",
+  "deployment": "hello-allowed",
+  "action": "delete",
+  "message": "deployment deleted",
+  "required_label": "proxy-access=allowed",
+  "deployment_label": "allowed"
+}
+```
+
+Delete error response format (JSON):
+- `400` malformed path: `{"error":"malformed path"}`
+- `403` label auth fail: includes `required_label` and `deployment_label`
+- `404` deployment not found: includes `namespace`, `deployment`, `action`
+- `500` Kubernetes/client failure: includes `details`
+
 Logs:
 
 ```bash
 curl -i http://127.0.0.1:8080/api/v1/namespaces/proxy-test/pods/does-not-exist/logs
 curl -i http://127.0.0.1:8080/api/v1/namespaces/proxy-test/pods/<POD_NAME>/logs
+
+# Default behavior: tailLines=100 (latest 100 lines)
+curl -i "http://127.0.0.1:8080/api/v1/namespaces/proxy-test/pods/<POD_NAME>/logs"
+
+# Last 500 lines
+curl -i "http://127.0.0.1:8080/api/v1/namespaces/proxy-test/pods/<POD_NAME>/logs?tailLines=500"
+
+# Logs from last 10 minutes
+curl -i "http://127.0.0.1:8080/api/v1/namespaces/proxy-test/pods/<POD_NAME>/logs?sinceSeconds=600"
+
+# Stream live logs (follow)
+curl -i "http://127.0.0.1:8080/api/v1/namespaces/proxy-test/pods/<POD_NAME>/logs?follow=true"
+
+# Cap total bytes returned
+curl -i "http://127.0.0.1:8080/api/v1/namespaces/proxy-test/pods/<POD_NAME>/logs?limitBytes=1048576"
+
+# Include per-line RFC3339 timestamps
+curl -i "http://127.0.0.1:8080/api/v1/namespaces/proxy-test/pods/<POD_NAME>/logs?timestamps=true"
+
+# Combine options for high-volume debugging
+curl -i "http://127.0.0.1:8080/api/v1/namespaces/proxy-test/pods/<POD_NAME>/logs?tailLines=200&sinceSeconds=300&timestamps=true"
 ```
+
+Logs query parameters:
+- `tailLines` (int): number of recent lines to return; default is `100`.
+- `sinceSeconds` (int): only return logs newer than N seconds.
+- `follow` (bool): stream logs until the client disconnects.
+- `limitBytes` (int): cap the number of bytes returned.
+- `timestamps` (bool): include timestamps on each log line.
 
 Pod status:
 
@@ -95,3 +169,4 @@ kubectl -n proxy-test port-forward svc/k8s-proxy-api 8080:8080
 ```
 
 Then run the curl examples above against `http://127.0.0.1:8080`.
+```

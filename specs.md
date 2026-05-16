@@ -1,50 +1,111 @@
 # k8s-proxy-api Specs
 
 ## Overview
-`k8s-proxy-api` is a small internal Go service that exposes a tightly scoped HTTP API for a limited set of Kubernetes operations.
+`k8s-proxy-api` is a minimal Go HTTP proxy for scoped Kubernetes ops (deploy restart/delete, pod logs/status). Not a full K8s API; tight control plane for internal UIs/services.
 
-The goal is **not** to provide general Kubernetes API access. The goal is to provide a narrow control plane that can later be consumed by another internal UI or service.
-
-This project is being built incrementally. The current phase focuses on:
-- a minimal stdlib HTTP server
-- local development against a kubeconfig
-- future support for in-cluster execution
-- health reporting for Kubernetes connectivity
-
-## Current Phase Goal
-In this phase, the service must:
-- start a small HTTP server using Go's standard library
-- support `GET /health`
-- attempt to initialize Kubernetes client-go using:
-  1. `KUBECONFIG` if set
-  2. in-cluster config otherwise
-- create a Kubernetes clientset during startup
-- keep the HTTP server running even if Kubernetes is unreachable
-- report Kubernetes connectivity state in the `/health` response
-
-This phase is about proving the application structure and Kubernetes connectivity model before implementing any real cluster actions.
+Single binary (`go build`), stdlib `net/http`, client-go. Strict paths, label auth (`proxy-access=allowed`).
 
 ## Design Principles
-- Keep the code small and readable
-- Use stdlib `net/http`
-- Avoid third-party routers
-- Prefer small helper functions over broad abstractions
-- Do not couple server startup to successful Kubernetes API connectivity
-- Return structured JSON responses
-- Build incrementally so each phase can be tested independently
+- Single entry (`main.go` wires pkgs).
+- `/health` unversioned; ops `/api/v1/...`.
+- Strict paths: no //, trailing /, ./..
+- JSON errors w/ context (ns/name/action).
+- Narrow RBAC: deps get/patch, pods get/list/log, rs get.
+- Resilient: Runs sans K8s (health reports).
+- Incremental: Phases build/test independently.
 
-## Runtime Configuration
-The service should determine Kubernetes configuration as follows:
+## Runtime Config
+1. `KUBECONFIG` → file config.
+2. Else in-cluster.
 
-1. If the `KUBECONFIG` environment variable is set:
-   - load config from that file
+Local: `export KUBECONFIG=/etc/rancher/k3s/k3s.yaml && go run .`
 
-2. Otherwise:
-   - attempt to use in-cluster Kubernetes config
+## APIs (Immutable)
+| Method | Path | Response | Notes |
+|--------|------|----------|-------|
+| GET | `/health` | JSON `{app_status:"ok", kubernetes_reachable:bool, version/error}` | Connectivity. |
+| POST | `/api/v1/namespaces/{ns}/deployments/{name}/restart` | 200 JSON or err (404/403/5xx) | Patch restart annot. Label req'd. |
+| DELETE | `/api/v1/namespaces/{ns}/deployments/{name}/delete` | 200 JSON or err (400/404/403/5xx) | Delete deployment. Label req'd. |
+| GET | `/api/v1/namespaces/{ns}/pods/{pod}/logs` | text stream or JSON err | Log options supported; default `tailLines=100`. |
+| GET | `/api/v1/namespaces/{ns}/deployments/{name}/pods/status` | JSON pod[] `{name,phase,ip,conditions[],containers[],ready/total,restarts}` | Selector pods. Label req'd. |
 
-This allows practical local development on a laptop or dev box while also supporting later deployment inside Kubernetes.
+### Delete Deployment Endpoint
+`DELETE /api/v1/namespaces/{ns}/deployments/{name}/delete`
 
-### Local Development Example
+Example:
+
 ```bash
-export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-go run .
+curl -i -X DELETE "http://127.0.0.1:8080/api/v1/namespaces/proxy-test/deployments/hello-allowed/delete"
+```
+
+Success response (`200`, JSON):
+
+```json
+{
+  "success": true,
+  "authorized": true,
+  "namespace": "proxy-test",
+  "deployment": "hello-allowed",
+  "action": "delete",
+  "message": "deployment deleted",
+  "required_label": "proxy-access=allowed",
+  "deployment_label": "allowed"
+}
+```
+
+Error responses (JSON):
+- `400`: `{"error":"malformed path"}`
+- `403`: deployment is not allowed for proxy access; includes `required_label` and `deployment_label`
+- `404`: deployment not found
+- `500`: failed to read/delete deployment with `details`
+
+### Logs Endpoint Query Parameters
+`GET /api/v1/namespaces/{ns}/pods/{pod}/logs`
+
+- `tailLines` (int): return the most recent N log lines. Default: `100`.
+- `sinceSeconds` (int): return only logs newer than N seconds.
+- `follow` (bool): stream logs continuously until client disconnect.
+- `limitBytes` (int): cap bytes returned by the log response.
+- `timestamps` (bool): include timestamps on each line.
+
+Examples:
+
+```bash
+# Default (latest 100 lines)
+curl -i "http://127.0.0.1:8080/api/v1/namespaces/proxy-test/pods/<POD_NAME>/logs"
+
+# Tail more lines
+curl -i "http://127.0.0.1:8080/api/v1/namespaces/proxy-test/pods/<POD_NAME>/logs?tailLines=500"
+
+# Last 5 minutes, include timestamps
+curl -i "http://127.0.0.1:8080/api/v1/namespaces/proxy-test/pods/<POD_NAME>/logs?sinceSeconds=300&timestamps=true"
+
+# Follow stream with 1MiB cap for initial burst
+curl -i "http://127.0.0.1:8080/api/v1/namespaces/proxy-test/pods/<POD_NAME>/logs?follow=true&limitBytes=1048576"
+```
+
+## K8s Flow
+- Client: `internal/k8sclient` (KUBECONFIG/in-cluster).
+- Handlers: `internal/handlers` (health/restart/logs/status).
+- Auth: Label check.
+- Pods→Dep: Traverse pod→rs→dep owners.
+
+## Deploy (proxy-test ns)
+`kubectl apply -f k8s/proxy-test.yaml` (SA/Role/Deploy/Svc).
+
+## Verification
+- Unit: `go test ./... -cover`
+- E2E: `tools/test.sh`
+- Smoke: `gofmt -w . && go test ./... && go build .`
+
+## Phases Complete
+- Phase 1: Health + K8s connect.
+- Phase 2: Restart/logs/status + auth/strict paths.
+- Phase 3: Modularize/tests (in-progress).
+
+## Next Phases
+- Observability (metrics/logs).
+- Validation (ns/name lengths).
+- OpenAPI spec.
+- Multi-ns authz.
+-
