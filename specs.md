@@ -26,6 +26,8 @@ Local: `export KUBECONFIG=/etc/rancher/k3s/k3s.yaml && go run .`
 | GET | `/health` | JSON `{app_status:"ok", kubernetes_reachable:bool, version/error}` | Connectivity. |
 | POST | `/api/v1/namespaces/{ns}/deployments/{name}/restart` | 200 JSON or err (404/403/5xx) | Patch restart annot. Label req'd. |
 | DELETE | `/api/v1/namespaces/{ns}/deployments/{name}/delete` | 200 JSON or err (400/404/403/5xx) | Delete deployment. Label req'd. |
+| GET | `/api/v1/namespaces/{ns}/deployments` | JSON list `{namespace,count,deployments[]}` | Namespace deployment listing. |
+| GET | `/api/v1/namespaces/{ns}/pods` | JSON list `{namespace,count,pods[]}` | Namespace pod listing. |
 | GET | `/api/v1/namespaces/{ns}/pods/{pod}/logs` | text stream or JSON err | Log options supported; default `tailLines=100`. |
 | GET | `/api/v1/namespaces/{ns}/deployments/{name}/pods/status` | JSON pod[] `{name,phase,ip,conditions[],containers[],ready/total,restarts}` | Selector pods. Label req'd. |
 
@@ -58,6 +60,74 @@ Error responses (JSON):
 - `403`: deployment is not allowed for proxy access; includes `required_label` and `deployment_label`
 - `404`: deployment not found
 - `500`: failed to read/delete deployment with `details`
+
+### Namespace Listing Endpoints
+
+#### List Deployments in Namespace
+`GET /api/v1/namespaces/{ns}/deployments`
+
+Description:
+- Returns deployments scoped to the requested namespace.
+
+Example:
+
+```bash
+curl -i "http://127.0.0.1:8080/api/v1/namespaces/proxy-test/deployments"
+```
+
+Basic success response (`200`, JSON):
+
+```json
+{
+  "namespace": "proxy-test",
+  "count": 2,
+  "deployments": [
+    {
+      "name": "hello",
+      "replicas": 1,
+      "ready_replicas": 1,
+      "available_replicas": 1,
+      "updated_replicas": 1
+    }
+  ]
+}
+```
+
+#### List Pods in Namespace
+`GET /api/v1/namespaces/{ns}/pods`
+
+Description:
+- Returns pods scoped to the requested namespace.
+ 
+Error responses:
+- `405`: Wrong HTTP method
+- `400`: Malformed path
+- `503`: Kubernetes client unavailable or list operation failed
+
+Example:
+
+```bash
+curl -i "http://127.0.0.1:8080/api/v1/namespaces/proxy-test/pods"
+```
+
+Basic success response (`200`, JSON):
+
+```json
+{
+  "namespace": "proxy-test",
+  "count": 3,
+  "pods": [
+    {
+      "name": "hello-7f9d7f7f75-abcde",
+      "phase": "Running",
+      "ip": "10.42.0.15",
+      "ready_containers": 1,
+      "total_containers": 1,
+      "restart_count": 0
+    }
+  ]
+}
+```
 
 ### Logs Endpoint Query Parameters
 `GET /api/v1/namespaces/{ns}/pods/{pod}/logs`

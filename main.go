@@ -73,10 +73,12 @@ type healthResponse struct {
 }
 
 const (
-	RouteRestart = "restart"
-	RouteLogs    = "logs"
-	RoutePods    = "pods-status"
-	RouteDelete  = "delete"
+	RouteRestart     = "restart"
+	RouteLogs        = "logs"
+	RoutePods        = "pods-status"
+	RouteDelete      = "delete"
+	RouteDeployments = "deployments"
+	RoutePodsList    = "pods"
 )
 
 func loggingMiddleware(next http.Handler) http.Handler {
@@ -367,6 +369,26 @@ func parseNamespaceRoute(path string) (namespaceRoute, bool) {
 	}
 
 	parts = parts[2:]
+	if len(parts) == 3 && parts[0] == "namespaces" {
+		ns := parts[1]
+		resource := parts[2]
+
+		if resource == RouteDeployments {
+			return namespaceRoute{
+				namespace: ns,
+				kind:      RouteDeployments,
+			}, true
+		}
+		if resource == RoutePodsList {
+			return namespaceRoute{
+				namespace: ns,
+				kind:      RoutePodsList,
+			}, true
+		}
+
+		return namespaceRoute{namespace: ns}, true
+	}
+
 	if len(parts) == 5 && parts[0] == "namespaces" {
 		ns := parts[1]
 		resource := parts[2]
@@ -441,6 +463,12 @@ func (a *appState) namespaceHandler(w http.ResponseWriter, r *http.Request) {
 
 	case RouteDelete:
 		handlers.DeleteDeploymentHandler(a.kubeClient, a.kubeInitErr, SplitPathStrict).ServeHTTP(w, r)
+
+	case RouteDeployments:
+		handlers.ListDeploymentsHandler(a.kubeClient, a.kubeInitErr, SplitPathStrict).ServeHTTP(w, r)
+
+	case RoutePodsList:
+		handlers.ListPodsHandler(a.kubeClient, a.kubeInitErr, SplitPathStrict).ServeHTTP(w, r)
 
 	default:
 		writeJSONError(w, http.StatusNotFound, "endpoint not found")

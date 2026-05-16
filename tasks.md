@@ -1,4 +1,3 @@
-
 `tasks.md`
 ```md
 # k8s-proxy-api Tasks
@@ -7,7 +6,7 @@
 Implementation should stay incremental.
 Each task should be completed, tested, and committed before moving to the next one.
 
-## Completed
+## Completed (Core APIs)
 - [x] Initialize the Go module
 - [x] Create a minimal stdlib HTTP server
 - [x] Add `GET /health`
@@ -15,7 +14,6 @@ Each task should be completed, tested, and committed before moving to the next o
 - [x] Add basic request logging
 - [x] Confirm the server runs locally and responds on `127.0.0.1:8080`
 
-## Complted
 ### Add Kubernetes client-go with practical dev behavior
 - [x] Add official `client-go` dependencies
 - [x] Load Kubernetes config from `KUBECONFIG` when set
@@ -34,75 +32,70 @@ Each task should be completed, tested, and committed before moving to the next o
   - [x] `go run .`
   - [x] `curl http://127.0.0.1:8080/health`
 
-## Completed
-### Placeholder API structure
-- [x] Add placeholder route:
+### Placeholder API structure → Full Impl
+- [x] Add routes:
   - [x] `POST /api/v1/namespaces/{ns}/deployments/{name}/restart`
-- [x] Add placeholder route:
   - [x] `GET /api/v1/namespaces/{ns}/pods/{pod}/logs`
-- [x] Parse path segments explicitly and safely
-- [x] Return structured JSON errors for malformed paths
-
-## Current Tasks
-### Deployment authorization helper
-- [x] Add helper to get a Deployment by namespace/name
-- [x] Add helper to verify label `proxy-access=allowed`
-- [x] Return `404` when Deployment is missing
-- [x] Return `403` when label is missing or not allowed
-
-### Safe Deployment restart
-- [x] Implement restart handler using a narrow patch
-- [x] Patch `spec.template.metadata.annotations`
-- [x] Set `kubectl.kubernetes.io/restarted-at`
-- [x] Return clear JSON success/error responses
-
-### Pod ownership resolution
-- [x] Add helper to resolve Pod ownership:
-  - [x] Pod -> ReplicaSet -> Deployment
-- [x] Return clear errors when ownership cannot be resolved
-
-### Pod logs
-- [x] Implement `GET /api/v1/namespaces/{ns}/pods/{pod}/logs`
-- [x] Authorize access through owning Deployment label check
-- [x] Stream logs directly to the HTTP response
-- [x] Avoid buffering the entire log output in memory
-
-### Pod status
-- [x] Add deployment-scoped endpoint:
   - [x] `GET /api/v1/namespaces/{ns}/deployments/{name}/pods/status`
-- [x] List pods belonging to the Deployment
-- [x] Return:
-  - [x] pod name
-  - [x] phase
-  - [x] pod IP
-  - [x] conditions
-  - [x] container readiness
-  - [x] restart counts
+- [x] Parse path segments explicitly and safely (`SplitPathStrict`)
+- [x] Return structured JSON errors for malformed paths/auth/missing
 
-### Packaging and deployment
-- [x] Add a minimal Dockerfile
-- [x] Prefer a small non-root image
-- [x] Generate Kubernetes manifests:
-  - [x] ServiceAccount
-  - [x] Role
-  - [x] RoleBinding
-  - [x] Deployment
-  - [x] Service
+## Refactor: Modularization & Tests (from refactor_plan.md)
+Status: Tasks 1-5 done/partial (testify, handlers dir/health, main_test paths, k8sclient).
 
-## Guardrails
-These should stay true as the project grows:
-- [ ] Do not add third-party routers unless there is a strong reason
-- [ ] Do not expose general Kubernetes API access
-- [ ] Keep RBAC as narrow as possible
-- [ ] Keep authorization logic explicit
-- [ ] Keep code understandable enough to maintain without a framework
-- [ ] Test each phase before moving to the next one
+### Remaining Tasks (TDD: red→green→refactor)
+- [x] **Task 6: Extract restart handler** (`internal/handlers/restart.go` +test)
+- [x] **Task 7: Extract auth** (`internal/auth/check.go` +test)
+- [x] **Task 8: Extract logs & status** (`internal/handlers/logs.go/status.go` +tests)
+- [x] **Task 9: Integration test** (main_test.go full mux +fake)
+- [x] **Task 10: Full verify**
+
+## Logs Endpoint Improvement (Large Volume Handling)
+- [x] **Task 11: Improve logs endpoint for high volume**
+  - Add query parameters: `tailLines`, `sinceSeconds`, `follow`, `limitBytes`, `timestamps`
+  - Update `LogsHandler` / `streamPodLogs` to use `corev1.PodLogOptions`
+  - Update tests in `logs_test.go` (table-driven)
+  - Update `README.MD` and `specs.md` documentation
+  - Commit: `380c3dc feat: support log tailing, limits, follow and timestamps for large volumes`
+
+## Deployment Delete Endpoint
+- [x] **Task 12: Add DELETE deployment endpoint**
+  - Update path parsing to support `/deployments/{name}/delete`
+  - Create `DeleteDeploymentHandler` in `internal/handlers/delete.go`
+  - Add unit tests (success, 404, 403, malformed path)
+  - Wire handler into `main.go` `namespaceHandler`
+  - Update `README.MD` and `specs.md`
+  - Commit: `d20d315 feat: add DELETE /api/v1/namespaces/{ns}/deployments/{name}/delete endpoint`
+
+## Namespace Listing Endpoints
+- [ ] **Task 13: Add namespace-level listing endpoints**
+  - Add route constants (`RouteDeployments`, `RoutePodsList`)
+  - Update path parsing in `main.go`
+  - Create `ListDeploymentsHandler` and `ListPodsHandler`
+  - Add unit tests for both handlers
+  - Wire handlers into `main.go`
+  - Update `README.MD` and `specs.md`
+  - Commit: `feat: add namespace deployments and pods listing endpoints`
+
+## Packaging & Deploy (Ongoing)
+- [x] Dockerfile? (multi-stage, nonroot)
+- [x] Manifests: `k8s/proxy-test.yaml` (SA/Role/Deploy/Svc)
+
+## Guardrails (Ongoing)
+- [x] No 3rd-party routers
+- [x] Narrow K8s scope/RBAC
+- [x] Explicit auth
+- [ ] Readable (post-refactor)
+- [ ] Test phases (add cover 80%+)
+- [ ] Incremental commits
 
 ## Suggested Commit Milestones
-- [ ] `feat: add kube client initialization and health reporting`
-- [ ] `feat: add placeholder restart and logs routes`
-- [ ] `feat: add deployment label authorization`
-- [ ] `feat: implement deployment restart patch`
-- [ ] `feat: implement pod ownership resolution and logs streaming`
-- [ ] `feat: add deployment pod status endpoint`
-- [ ] `feat: add container build and kubernetes manifests`
+- [x] `feat: add kube client...`
+- [x] `feat: add restart/logs/status`
+- [x] `refactor: extract handlers/k8sclient/auth +tests`
+- [x] `test: integration + cover`
+- [x] `feat: improve logs endpoint for large volumes`
+- [x] `feat: add deployment delete endpoint`
+- [ ] `feat: add namespace listing endpoints`
+- [ ] `chore: docker/manifests`
+```

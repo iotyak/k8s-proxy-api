@@ -49,8 +49,19 @@ Health route:
 Operational routes (versioned):
 - `POST /api/v1/namespaces/{ns}/deployments/{name}/restart`
 - `DELETE /api/v1/namespaces/{ns}/deployments/{name}/delete`
+- `GET /api/v1/namespaces/{ns}/deployments`
+- `GET /api/v1/namespaces/{ns}/pods`
 - `GET /api/v1/namespaces/{ns}/pods/{pod}/logs`
 - `GET /api/v1/namespaces/{ns}/deployments/{name}/pods/status`
+
+Route descriptions:
+- `GET /api/v1/namespaces/{ns}/deployments`: list deployments in a namespace.
+- `GET /api/v1/namespaces/{ns}/pods`: list pods in a namespace.
+ 
+Error responses:
+- `405`: Wrong HTTP method
+- `400`: Malformed path
+- `503`: Kubernetes client unavailable or list operation failed
 
 ## Curl Examples
 
@@ -96,6 +107,55 @@ Delete error response format (JSON):
 - `403` label auth fail: includes `required_label` and `deployment_label`
 - `404` deployment not found: includes `namespace`, `deployment`, `action`
 - `500` Kubernetes/client failure: includes `details`
+
+List deployments in namespace:
+
+```bash
+curl -i http://127.0.0.1:8080/api/v1/namespaces/proxy-test/deployments
+```
+
+List deployments success response format (`200` JSON):
+
+```json
+{
+  "namespace": "proxy-test",
+  "count": 2,
+  "deployments": [
+    {
+      "name": "hello",
+      "replicas": 1,
+      "ready_replicas": 1,
+      "available_replicas": 1,
+      "updated_replicas": 1
+    }
+  ]
+}
+```
+
+List pods in namespace:
+
+```bash
+curl -i http://127.0.0.1:8080/api/v1/namespaces/proxy-test/pods
+```
+
+List pods success response format (`200` JSON):
+
+```json
+{
+  "namespace": "proxy-test",
+  "count": 3,
+  "pods": [
+    {
+      "name": "hello-7f9d7f7f75-abcde",
+      "phase": "Running",
+      "ip": "10.42.0.15",
+      "ready_containers": 1,
+      "total_containers": 1,
+      "restart_count": 0
+    }
+  ]
+}
+```
 
 Logs:
 
